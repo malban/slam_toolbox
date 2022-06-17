@@ -155,6 +155,9 @@ void SlamToolbox::setParams()
   enable_interactive_mode_ = this->declare_parameter("enable_interactive_mode",
       enable_interactive_mode_);
 
+  enable_continuous_matching_ = false;
+  enable_continuous_matching_ = this->declare_parameter("enable_continuous_matching", enable_continuous_matching_);
+
   double tmp_val = 0.5;
   tmp_val = this->declare_parameter("transform_timeout", tmp_val);
   transform_timeout_ = rclcpp::Duration::from_seconds(tmp_val);
@@ -555,7 +558,15 @@ LocalizedRangeScan * SlamToolbox::addScan(
   covariance.SetToIdentity();
 
   if (processor_type_ == PROCESS) {
-    processed = smapper_->getMapper()->Process(range_scan, &covariance);
+    processed = smapper_->getMapper()->Process(range_scan);
+    if (!processed && enable_continuous_matching_) {
+      RCLCPP_INFO(get_logger(), "match_only");
+      match_only = true;
+      auto start_time = now();
+      processed = smapper_->getMapper()->Process(range_scan, &covariance, true);
+      auto elapsed = now() - start_time;
+      RCLCPP_INFO(get_logger(), "match time: %.2lf ms", static_cast<double>(elapsed.nanoseconds()) / 1e6);
+    }
   } else if (processor_type_ == PROCESS_FIRST_NODE) {
     processed = smapper_->getMapper()->ProcessAtDock(range_scan, &covariance);
     processor_type_ = PROCESS;
@@ -583,16 +594,22 @@ LocalizedRangeScan * SlamToolbox::addScan(
   // if successfully processed, create odom to map transformation
   // and add our scan to storage
   if (processed) {
-    if (enable_interactive_mode_) {
+    if (enable_interactive_mode_ && !match_only) {
       scan_holder_->addScan(*scan);
     }
 
     setTransformFromPoses(range_scan->GetCorrectedPose(), odom_pose,
       scan->header.stamp, update_reprocessing_transform);
-    dataset_->Add(range_scan);
+
+    if (!match_only) {
+      dataset_->Add(range_scan);
+    }
 
     publishPose(range_scan->GetCorrectedPose(), covariance, scan->header.stamp);
-  } else {
+
+  }
+
+  if (!processed || match_only) {
     delete range_scan;
     range_scan = nullptr;
   }

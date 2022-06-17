@@ -1996,7 +1996,7 @@ public:
    *
    * @return true if the scan was added successfully, false otherwise
    */
-  virtual kt_bool Process(LocalizedRangeScan * pScan, Matrix3 * covariance = nullptr);
+  virtual kt_bool Process(LocalizedRangeScan * pScan, Matrix3 * covariance = nullptr, bool match_only = false);
 
   /**
    * Process an Object
