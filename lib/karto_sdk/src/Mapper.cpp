@@ -2676,7 +2676,10 @@ kt_bool Mapper::Process(Object *  /*pObject*/)  // NOLINT
   return true;
 }
 
-kt_bool Mapper::Process(LocalizedRangeScan * pScan, Matrix3 * covariance, bool match_only)
+kt_bool Mapper::Process(
+  LocalizedRangeScan * pScan,
+  Matrix3 * covariance,
+  bool force_match_only)
 {
   if (pScan != NULL) {
     karto::LaserRangeFinder * pLaserRangeFinder = pScan->GetLaserRangeFinder();
@@ -2701,7 +2704,7 @@ kt_bool Mapper::Process(LocalizedRangeScan * pScan, Matrix3 * covariance, bool m
     }
 
     // test if scan is outside minimum boundary or if heading is larger then minimum heading
-    if (!match_only && !HasMovedEnough(pScan, pLastScan)) {
+    if (!force_match_only && !HasMovedEnough(pScan, pLastScan)) {
       return false;
     }
 
@@ -2721,7 +2724,7 @@ kt_bool Mapper::Process(LocalizedRangeScan * pScan, Matrix3 * covariance, bool m
       }
     }
 
-    if (!match_only) {
+    if (!force_match_only) {
       // add scan to buffer and assign id
       m_pMapperSensorManager->AddScan(pScan);
 
