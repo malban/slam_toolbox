@@ -261,9 +261,11 @@ void LoopClosureAssistant::publishGraph()
       p1.y = pose1.GetY();
 
       if (source_id >= first_localization_id || target_id >= first_localization_id) {
+        localization_edges_marker.points.push_back(p0);
         localization_edges_marker.points.push_back(p1);
       }
       else {
+        edges_marker.points.push_back(p0);
         edges_marker.points.push_back(p1);
       }
   }
