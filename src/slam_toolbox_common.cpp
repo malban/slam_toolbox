@@ -623,7 +623,14 @@ LocalizedRangeScan * SlamToolbox::addScan(
     }
   } else if (processor_type_ == PROCESS_LOCALIZATION) {
     processed = smapper_->getMapper()->ProcessLocalization(range_scan, &covariance, match_only);
-    update_reprocessing_transform = false;
+
+    rclcpp::Time stamp = scan->header.stamp;
+    bool match_only = !processed
+          && maximum_match_interval_ >= rclcpp::Duration(0.)
+          && stamp - last_match_time > maximum_match_interval_;
+    if (match_only) {
+      processed = smapper_->getMapper()->ProcessLocalization(range_scan, &covariance, true);
+    }
   } else {
     RCLCPP_FATAL(get_logger(),
       "SlamToolbox: No valid processor type set! Exiting.");
@@ -878,6 +885,7 @@ bool SlamToolbox::setLocalizationModeCallback(
   if (req->data != in_localization_mode) {
     // Set near pose to most recent pose
 
+    /*
     auto stamp = now();
 
     //                                                                100 milliseconds
@@ -903,6 +911,7 @@ bool SlamToolbox::setLocalizationModeCallback(
 
     RCLCPP_INFO(get_logger(), "Setting 'near pose' to: x=%lf, y=%lf, yaw=%lf", map_pose.GetX(), map_pose.GetY(), map_pose.GetHeading());
     process_near_pose_ = std::make_unique<Pose2>(map_pose);
+    */
 
     if (!req->data) {
       // clear localization buffer
@@ -911,7 +920,7 @@ bool SlamToolbox::setLocalizationModeCallback(
       smapper_->clearLocalizationBuffer();
 
       RCLCPP_INFO(get_logger(), "Entering mapping mode.");
-      processor_type_ = PROCESS_NEAR_REGION;
+      processor_type_ = PROCESS;
     }
     else {
       RCLCPP_INFO(get_logger(), "Entering localization mode.");

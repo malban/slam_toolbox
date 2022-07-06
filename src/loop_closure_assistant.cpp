@@ -154,7 +154,7 @@ void LoopClosureAssistant::publishGraph()
     return;
   }
 
-  RCLCPP_INFO(node_->get_logger(), "Graph size: %zu", (int)graph->size());
+  RCLCPP_INFO(node_->get_logger(), "Graph size: %zu", graph->size());
   bool interactive_mode = false;
   {
     boost::mutex::scoped_lock lock(interactive_mutex_);
@@ -252,7 +252,6 @@ void LoopClosureAssistant::publishGraph()
       geometry_msgs::msg::Point p0;
       p0.x = pose0.GetX();
       p0.y = pose0.GetY();
-      edges_marker.points.push_back(p0);
 
       int target_id = edge->GetTarget()->GetObject()->GetUniqueId();
       const auto& pose1 = edge->GetTarget()->GetObject()->GetCorrectedPose();
