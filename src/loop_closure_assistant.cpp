@@ -183,12 +183,10 @@ void LoopClosureAssistant::publishGraph()
   visualization_msgs::msg::Marker m = vis_utils::toMarker(map_frame_,
       "vertices", 0.1, node_);
 
-  // add map nodes (red)
+  // add map nodes
   for (const auto& sensor_name: vertices) {
     for (const auto& vertex: sensor_name.second) {
-      if (vertex.first >= first_localization_id) {
-        continue;
-      }
+      m.color.g = vertex.first < first_localization_id ? 0.0 : 1.0;
       const auto& pose = vertex.second->GetObject()->GetCorrectedPose();
       m.id = vertex.first;
       m.pose.position.x = pose.GetX();
@@ -205,17 +203,6 @@ void LoopClosureAssistant::publishGraph()
         marray.markers.push_back(m);
       }
     }
-  }
-
-  // add localization nodes (yellow)
-  m.ns = "localization_vertices";
-  m.color.g = 1.0;
-  for (const auto& vertex: localization_vertices) {
-      const auto& pose = vertex.vertex->GetObject()->GetCorrectedPose();
-      m.id = vertex.vertex->GetObject()->GetUniqueId();
-      m.pose.position.x = pose.GetX();
-      m.pose.position.y = pose.GetY();
-      marray.markers.push_back(m);
   }
 
   // add line markers for graph edges

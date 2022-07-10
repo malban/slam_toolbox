@@ -21,7 +21,7 @@
 #include <map>
 #include <vector>
 #include <unordered_map>
-#include <deque>
+#include <queue>
 #include <algorithm>
 #include <chrono>
 #include <utility>
@@ -1936,7 +1936,7 @@ struct LocalizationScanVertex
   Vertex<LocalizedRangeScan> * vertex;
 };
 
-typedef std::deque<LocalizationScanVertex> LocalizationScanVertices;
+typedef std::queue<LocalizationScanVertex> LocalizationScanVertices;
 
 class KARTO_EXPORT Mapper : public Module
 {
