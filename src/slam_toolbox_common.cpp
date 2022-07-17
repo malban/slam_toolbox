@@ -211,10 +211,6 @@ void SlamToolbox::setROSInterfaces()
     "slam_toolbox/deserialize_map",
     std::bind(&SlamToolbox::deserializePoseGraphCallback, this,
     std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
-  ssSetLocalizationMode_ = this->create_service<std_srvs::srv::SetBool>(
-    "slam_toolbox/set_localization_mode",
-    std::bind(&SlamToolbox::setLocalizationModeCallback, this,
-    std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
 
   scan_filter_sub_ =
     std::make_unique<message_filters::Subscriber<sensor_msgs::msg::LaserScan>>(
@@ -578,8 +574,6 @@ LocalizedRangeScan * SlamToolbox::addScan(
       range_scan, false, &covariance);
     update_reprocessing_transform = true;
     processor_type_ = PROCESS;
-  } else if (processor_type_ == PROCESS_LOCALIZATION) {
-    processed = smapper_->getMapper()->ProcessLocalization(range_scan, &covariance);
   } else {
     RCLCPP_FATAL(get_logger(),
       "SlamToolbox: No valid processor type set! Exiting.");
@@ -604,34 +598,6 @@ LocalizedRangeScan * SlamToolbox::addScan(
   }
 
   return range_scan;
-}
-
-/*****************************************************************************/
-bool SlamToolbox::setLocalizationModeCallback(
-  const std::shared_ptr<rmw_request_id_t> request_header,
-  const std::shared_ptr<std_srvs::srv::SetBool::Request> req,
-  std::shared_ptr<std_srvs::srv::SetBool::Response> resp)
-/*****************************************************************************/
-{
-  bool in_localization_mode = processor_type_ == PROCESS_LOCALIZATION;
-  if (req->data != in_localization_mode) {
-    if (!req->data) {
-      // clear localization buffer
-      boost::mutex::scoped_lock lock(smapper_mutex_);
-      RCLCPP_INFO(get_logger(), "Clearing localization buffer.");
-      smapper_->clearLocalizationBuffer();
-
-      RCLCPP_INFO(get_logger(), "Entering mapping mode.");
-      processor_type_ = PROCESS;
-    }
-    else {
-      RCLCPP_INFO(get_logger(), "Entering localization mode.");
-      processor_type_ = PROCESS_LOCALIZATION;
-    }
-  }
-
-  resp->success = true;
-  return true;
 }
 
 /*****************************************************************************/

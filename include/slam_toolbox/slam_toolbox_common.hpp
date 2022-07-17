@@ -38,7 +38,6 @@
 #include "tf2/LinearMath/Matrix3x3.h"
 #include "tf2_geometry_msgs/tf2_geometry_msgs.h"
 #include "tf2_sensor_msgs/tf2_sensor_msgs.h"
-#include "std_srvs/srv/set_bool.hpp"
 
 #include "pluginlib/class_loader.hpp"
 
@@ -62,7 +61,7 @@ class SlamToolbox : public rclcpp::Node
 public:
   explicit SlamToolbox(rclcpp::NodeOptions);
   SlamToolbox();
-  ~SlamToolbox();
+  virtual ~SlamToolbox();
   void configure();
   virtual void loadPoseGraphByParams();
 
@@ -90,10 +89,6 @@ protected:
     const std::shared_ptr<rmw_request_id_t> request_header,
     const std::shared_ptr<slam_toolbox::srv::DeserializePoseGraph::Request> req,
     std::shared_ptr<slam_toolbox::srv::DeserializePoseGraph::Response> resp);
-  virtual bool setLocalizationModeCallback(
-    const std::shared_ptr<rmw_request_id_t> request_header,
-    const std::shared_ptr<std_srvs::srv::SetBool::Request> req,
-    std::shared_ptr<std_srvs::srv::SetBool::Response> resp);
 
   // Loaders
   void loadSerializedPoseGraph(std::unique_ptr<karto::Mapper> &, std::unique_ptr<karto::Dataset> &);
@@ -144,7 +139,6 @@ protected:
   std::shared_ptr<rclcpp::Service<slam_toolbox::srv::Pause>> ssPauseMeasurements_;
   std::shared_ptr<rclcpp::Service<slam_toolbox::srv::SerializePoseGraph>> ssSerialize_;
   std::shared_ptr<rclcpp::Service<slam_toolbox::srv::DeserializePoseGraph>> ssDesserialize_;
-  std::shared_ptr<rclcpp::Service<std_srvs::srv::SetBool>> ssSetLocalizationMode_;
 
   // Storage for ROS parameters
   std::string odom_frame_, map_frame_, base_frame_, map_name_, scan_topic_;
