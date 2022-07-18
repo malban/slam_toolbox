@@ -41,7 +41,9 @@ SlamToolbox::SlamToolbox(rclcpp::NodeOptions options)
   first_measurement_(true),
   process_near_pose_(nullptr),
   transform_timeout_(rclcpp::Duration::from_seconds(0.5)),
-  minimum_time_interval_(std::chrono::nanoseconds(0))
+  minimum_time_interval_(std::chrono::nanoseconds(0)),
+  maximum_match_interval_(rclcpp::Duration::from_seconds(-1.0)),
+  slam_running_(true)
 /*****************************************************************************/
 {
   smapper_ = std::make_unique<mapper_utils::SMapper>();
@@ -55,6 +57,12 @@ void SlamToolbox::configure()
   setParams();
   setROSInterfaces();
   setSolver();
+
+  // pause new scan processing
+  if(!isPaused(NEW_MEASUREMENTS) && paused_at_startup_){
+    toggleScanProcessing();
+    slam_running_ = false;
+  }
 
   laser_assistant_ = std::make_unique<laser_utils::LaserAssistant>(
     shared_from_this(), tf_.get(), base_frame_);
@@ -73,9 +81,11 @@ void SlamToolbox::configure()
   transform_publish_period =
     this->declare_parameter("transform_publish_period",
       transform_publish_period);
-  threads_.push_back(std::make_unique<boost::thread>(
-      boost::bind(&SlamToolbox::publishTransformLoop,
-      this, transform_publish_period)));
+  if(transform_publish_period > 0){
+    threads_.push_back(std::make_unique<boost::thread>(
+        boost::bind(&SlamToolbox::publishTransformLoop,
+        this, transform_publish_period)));
+  }
   threads_.push_back(std::make_unique<boost::thread>(
       boost::bind(&SlamToolbox::publishVisualizations, this)));
 }
@@ -160,6 +170,8 @@ void SlamToolbox::setParams()
   transform_timeout_ = rclcpp::Duration::from_seconds(tmp_val);
   tmp_val = this->declare_parameter("minimum_time_interval", tmp_val);
   minimum_time_interval_ = rclcpp::Duration::from_seconds(tmp_val);
+  tmp_val = this->declare_parameter("maximum_match_interval", -1.0);
+  maximum_match_interval_ = rclcpp::Duration::from_seconds(tmp_val);
 
   bool debug = false;
   debug = this->declare_parameter("debug_logging", debug);
@@ -169,8 +181,13 @@ void SlamToolbox::setParams()
   }
 
   smapper_->configure(shared_from_this());
-  this->declare_parameter("paused_new_measurements");
-  this->set_parameter({"paused_new_measurements", false});
+  this->declare_parameter<bool>("paused_new_measurements");
+  // some systems dont have the tf transforms and lidar ready at startup which
+  // produces a lot of spam. this allows the user to decide when they want to start
+  // the lidar/TF processing.
+  if(!this->get_parameter_or<bool>("paused_new_measurements", paused_at_startup_, false)){
+    this->set_parameter({"paused_new_measurements", paused_at_startup_});
+  }
 }
 
 /*****************************************************************************/
@@ -190,6 +207,8 @@ void SlamToolbox::setROSInterfaces()
 
   pose_pub_ = this->create_publisher<geometry_msgs::msg::PoseWithCovarianceStamped>(
     "pose", 10);
+  status_pub_ = this->create_publisher<std_msgs::msg::Bool>(
+    "localization/status", 10);
   sst_ = this->create_publisher<nav_msgs::msg::OccupancyGrid>(
     map_name_, rclcpp::QoS(rclcpp::KeepLast(1)).transient_local().reliable());
   sstm_ = this->create_publisher<nav_msgs::msg::MapMetaData>(
@@ -198,7 +217,7 @@ void SlamToolbox::setROSInterfaces()
   ssMap_ = this->create_service<nav_msgs::srv::GetMap>("slam_toolbox/dynamic_map",
       std::bind(&SlamToolbox::mapCallback, this, std::placeholders::_1,
       std::placeholders::_2, std::placeholders::_3));
-  ssPauseMeasurements_ = this->create_service<slam_toolbox::srv::Pause>(
+  ssPauseMeasurements_ = this->create_service<std_srvs::srv::Trigger>(
     "slam_toolbox/pause_new_measurements",
     std::bind(&SlamToolbox::pauseNewMeasurementsCallback,
     this, std::placeholders::_1,
@@ -212,14 +231,18 @@ void SlamToolbox::setROSInterfaces()
     std::bind(&SlamToolbox::deserializePoseGraphCallback, this,
     std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
 
-  scan_filter_sub_ =
-    std::make_unique<message_filters::Subscriber<sensor_msgs::msg::LaserScan>>(
-    shared_from_this().get(), scan_topic_, rmw_qos_profile_sensor_data);
-  scan_filter_ =
-    std::make_unique<tf2_ros::MessageFilter<sensor_msgs::msg::LaserScan>>(
-    *scan_filter_sub_, *tf_, odom_frame_, 1, shared_from_this());
-  scan_filter_->registerCallback(
-    std::bind(&SlamToolbox::laserCallback, this, std::placeholders::_1));
+
+  ssStart_ = this->create_service<std_srvs::srv::Trigger>(
+    "slam_toolbox/start",
+    std::bind(&SlamToolbox::startSlamCallback, this,
+    std::placeholders::_1, std::placeholders::_2));
+  ssStop_ = this->create_service<std_srvs::srv::Trigger>(
+    "slam_toolbox/stop",
+    std::bind(&SlamToolbox::stopSlamCallback, this,
+    std::placeholders::_1, std::placeholders::_2));
+
+  scan_sub_ = create_subscription<sensor_msgs::msg::LaserScan>(
+    scan_topic_, rclcpp::SensorDataQoS().keep_last(1), std::bind(&SlamToolbox::laserCallback, this, std::placeholders::_1));
 }
 
 /*****************************************************************************/
@@ -273,6 +296,7 @@ void SlamToolbox::publishVisualizations()
   while (rclcpp::ok()) {
     updateMap();
     if (!isPaused(VISUALIZING_GRAPH)) {
+      boost::mutex::scoped_lock lock(smapper_mutex_);
       closure_assistant_->publishGraph();
     }
     r.sleep();
@@ -373,7 +397,7 @@ bool SlamToolbox::updateMap()
 /*****************************************************************************/
 {
   if (sst_->get_subscription_count() == 0) {
-    return true;
+    return false;
   }
   boost::mutex::scoped_lock lock(smapper_mutex_);
   OccupancyGrid * occ_grid = smapper_->getOccupancyGrid(resolution_);
@@ -543,6 +567,8 @@ LocalizedRangeScan * SlamToolbox::addScan(
   Pose2 & odom_pose)
 /*****************************************************************************/
 {
+  static rclcpp::Time last_match_time = rclcpp::Time(0.);
+
   // get our localized range scan
   LocalizedRangeScan * range_scan = getLocalizedRangeScan(
     laser, scan, odom_pose);
@@ -551,11 +577,26 @@ LocalizedRangeScan * SlamToolbox::addScan(
   boost::mutex::scoped_lock lock(smapper_mutex_);
   bool processed = false, update_reprocessing_transform = false;
 
+  // whether or not the scan was processed as only a scan match without updating
+  // the graph and scan buffer
+  bool match_only = false;
+
   Matrix3 covariance;
   covariance.SetToIdentity();
 
   if (processor_type_ == PROCESS) {
     processed = smapper_->getMapper()->Process(range_scan, &covariance);
+
+    // if the scan was not processed into the map because of insuffcient travel
+    // distance, then check if enough time as passed to just perform a scan
+    // match without updating the graph or scan buffer
+    rclcpp::Time stamp = scan->header.stamp;
+    bool match_only = !processed
+      && maximum_match_interval_ >= rclcpp::Duration::from_seconds(0.)
+      && stamp - last_match_time > maximum_match_interval_;
+    if (match_only) {
+      processed = smapper_->getMapper()->Process(range_scan, &covariance, true);
+    }
   } else if (processor_type_ == PROCESS_FIRST_NODE) {
     processed = smapper_->getMapper()->ProcessAtDock(range_scan, &covariance);
     processor_type_ = PROCESS;
@@ -583,7 +624,8 @@ LocalizedRangeScan * SlamToolbox::addScan(
   // if successfully processed, create odom to map transformation
   // and add our scan to storage
   if (processed) {
-    if (enable_interactive_mode_) {
+    last_match_time = scan->header.stamp;
+    if (enable_interactive_mode_ && !match_only) {
       scan_holder_->addScan(*scan);
     }
 
@@ -623,6 +665,10 @@ void SlamToolbox::publishPose(
   pose_msg.pose.covariance[35] = cov(2, 2) * yaw_covariance_scale_;      // yaw
 
   pose_pub_->publish(pose_msg);
+
+  std_msgs::msg::Bool status;
+  status.data = true;
+  status_pub_->publish(status);
 }
 
 /*****************************************************************************/
@@ -644,18 +690,12 @@ bool SlamToolbox::mapCallback(
 /*****************************************************************************/
 bool SlamToolbox::pauseNewMeasurementsCallback(
   const std::shared_ptr<rmw_request_id_t> request_header,
-  const std::shared_ptr<slam_toolbox::srv::Pause::Request> req,
-  std::shared_ptr<slam_toolbox::srv::Pause::Response> resp)
+  const std::shared_ptr<std_srvs::srv::Trigger::Request> req,
+  std::shared_ptr<std_srvs::srv::Trigger::Response> resp)
 /*****************************************************************************/
 {
-  bool curr_state = isPaused(NEW_MEASUREMENTS);
-  state_.set(NEW_MEASUREMENTS, !curr_state);
-
-  this->set_parameter({"paused_new_measurements", !curr_state});
-  RCLCPP_INFO(get_logger(), "SlamToolbox: Toggled to %s",
-    !curr_state ? "pause taking new measurements." :
-    "actively taking new measurements.");
-  resp->status = true;
+  toggleScanProcessing();
+  resp->success = true;
   return true;
 }
 
@@ -812,6 +852,100 @@ bool SlamToolbox::deserializePoseGraphCallback(
   }
 
   return true;
+}
+
+/*****************************************************************************/
+void SlamToolbox::toggleScanProcessing()
+/*****************************************************************************/
+{
+  bool curr_state = isPaused(NEW_MEASUREMENTS);
+  state_.set(NEW_MEASUREMENTS, !curr_state);
+
+  if(isPaused(NEW_MEASUREMENTS)){
+    scan_sub_.reset();
+  }else{
+    scan_sub_ = create_subscription<sensor_msgs::msg::LaserScan>(
+    scan_topic_, rclcpp::SensorDataQoS().keep_last(1), std::bind(&SlamToolbox::laserCallback, this, std::placeholders::_1));
+  }
+
+  this->set_parameter({"paused_new_measurements", !curr_state});
+  RCLCPP_INFO(get_logger(), "SlamToolbox: Toggled to %s",
+    !curr_state ? "pause taking new measurements." :
+    "actively taking new measurements.");
+}
+/*****************************************************************************/
+void SlamToolbox::startSlamCallback(const std::shared_ptr<std_srvs::srv::Trigger::Request> req,
+    std::shared_ptr<std_srvs::srv::Trigger::Response> resp)
+/*****************************************************************************/
+{
+  if(slam_running_){
+    RCLCPP_WARN(get_logger(), "SLAM was already started!");
+    resp->success = false;
+    return;
+  }
+  if(isPaused(NEW_MEASUREMENTS)){
+    toggleScanProcessing();
+  }
+  slam_running_ = true;
+  resp->success = true;
+}
+/*****************************************************************************/
+void SlamToolbox::stopSlamCallback(const std::shared_ptr<std_srvs::srv::Trigger::Request> req,
+    std::shared_ptr<std_srvs::srv::Trigger::Response> resp)
+/*****************************************************************************/
+{
+  if(!slam_running_){
+    RCLCPP_WARN(get_logger(), "SLAM was already stopped!");
+    resp->success = false;
+    return;
+  }
+  if(!isPaused(NEW_MEASUREMENTS)){
+    toggleScanProcessing();
+  }
+  resetSlam();
+  slam_running_ = false;
+  resp->success = true;  
+}
+/*****************************************************************************/
+void SlamToolbox::resetSlam()
+/*****************************************************************************/
+{
+  const bool paused_before_reset = isPaused(NEW_MEASUREMENTS);
+
+  // pause new scan processing
+  if(!isPaused(NEW_MEASUREMENTS)){
+    toggleScanProcessing();
+  }
+
+  RCLCPP_WARN(get_logger(), "Starting SLAM reset.");
+  std::unique_ptr<Dataset> dataset = std::make_unique<Dataset>();
+  std::unique_ptr<Mapper> mapper = std::make_unique<Mapper>();
+
+  boost::mutex::scoped_lock lock(smapper_mutex_);
+  solver_->Reset();
+  mapper->SetScanSolver(solver_.get());
+
+  // move the memory to our working dataset
+  smapper_->setMapper(mapper.release());
+  smapper_->configure(shared_from_this());
+  dataset_.reset(dataset.release());
+
+  // reset slam_toolbox bookkeeping
+  lasers_.clear();
+  scan_holder_->clearScans();
+  first_measurement_ = true;
+  boost::mutex::scoped_lock l(pose_mutex_);
+  processor_type_ = PROCESS;
+  process_near_pose_.reset();
+
+  // reset the closure_assistant's mapper (since its address just changed)
+  closure_assistant_->setMapper(smapper_->getMapper());
+
+  // resume new scan processing (unless it was already paused)
+  if(isPaused(NEW_MEASUREMENTS) && !paused_before_reset){
+    toggleScanProcessing();
+  }
+  RCLCPP_WARN(get_logger(), "Finished SLAM reset.");
 }
 
 }  // namespace slam_toolbox

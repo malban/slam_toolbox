@@ -70,6 +70,7 @@ set(libraries
     sync_slam_toolbox
     localization_slam_toolbox
     lifelong_slam_toolbox
+    map_and_localization_slam_toolbox
 )
 
 find_package(PkgConfig REQUIRED)
@@ -95,7 +96,6 @@ include_directories(include lib/karto_sdk/include
 add_definitions(${EIGEN3_DEFINITIONS})
 
 rosidl_generate_interfaces(${PROJECT_NAME}
-  srvs/Pause.srv
   srvs/ClearQueue.srv
   srvs/ToggleInteractive.srv
   srvs/Clear.srv
@@ -190,6 +190,7 @@ install(TARGETS async_slam_toolbox_node
                 sync_slam_toolbox_node
                 localization_slam_toolbox_node
                 lifelong_slam_toolbox_node
+                map_and_localization_slam_toolbox_node
                 merge_maps_kinematic
                 ${libraries}
   ARCHIVE DESTINATION lib
