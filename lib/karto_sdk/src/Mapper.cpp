@@ -2666,9 +2666,7 @@ void Mapper::Reset()
   }
   m_Initialized = false;
   m_Deserialized = false;
-  while (!m_LocalizationScanVertices.empty()) {
-    m_LocalizationScanVertices.pop();
-  }
+  m_LocalizationScanVertices.clear();
 }
 
 kt_bool Mapper::Process(Object *  /*pObject*/)  // NOLINT
@@ -2921,7 +2919,7 @@ void Mapper::AddScanToLocalizationBuffer(LocalizedRangeScan * pScan, Vertex <Loc
   LocalizationScanVertex lsv;
   lsv.scan = pScan;
   lsv.vertex = scan_vertex;
-  m_LocalizationScanVertices.push(lsv);
+  m_LocalizationScanVertices.push_back(lsv);
 
   while (m_LocalizationScanVertices.size() > getParamScanBufferSize() &&
          !cutsLocalizationAndMappingGraphs(m_LocalizationScanVertices.front()))
@@ -2939,7 +2937,7 @@ void Mapper::AddScanToLocalizationBuffer(LocalizedRangeScan * pScan, Vertex <Loc
       oldLSV.scan = NULL;
     }
 
-    m_LocalizationScanVertices.pop();
+    m_LocalizationScanVertices.pop_front();
   }
 }
 
@@ -3005,7 +3003,7 @@ void Mapper::ClearLocalizationBuffer()
       oldLSV.scan = NULL;
     }
 
-    m_LocalizationScanVertices.pop();
+    m_LocalizationScanVertices.pop_front();
   }
 
   std::vector<Name> names = m_pMapperSensorManager->GetSensorNames();
