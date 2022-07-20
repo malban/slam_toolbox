@@ -35,6 +35,8 @@ public:
 protected:
   void laserCallback(
     sensor_msgs::msg::LaserScan::ConstSharedPtr scan) override;
+  void localizePoseCallback(
+    const geometry_msgs::msg::PoseWithCovarianceStamped::SharedPtr msg) override;
   bool serializePoseGraphCallback(
     const std::shared_ptr<rmw_request_id_t> request_header,
     const std::shared_ptr<slam_toolbox::srv::SerializePoseGraph::Request> req,

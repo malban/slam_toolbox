@@ -36,7 +36,7 @@ public:
 protected:
   virtual void laserCallback(
     sensor_msgs::msg::LaserScan::ConstSharedPtr scan) override;
-  void localizePoseCallback(
+  virtual void localizePoseCallback(
     const geometry_msgs::msg::PoseWithCovarianceStamped::SharedPtr msg);
   bool clearLocalizationBuffer(
     const std::shared_ptr<rmw_request_id_t> request_header,

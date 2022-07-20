@@ -133,6 +133,29 @@ bool MapAndLocalizationSlamToolbox::deserializePoseGraphCallback(
   }
 }
 
+
+/*****************************************************************************/
+void MapAndLocalizationSlamToolbox::localizePoseCallback(
+  const geometry_msgs::msg::PoseWithCovarianceStamped::SharedPtr msg)
+/*****************************************************************************/
+{
+  if (processor_type_ == PROCESS_LOCALIZATION) {
+    LocalizationSlamToolbox::localizePoseCallback(msg);
+  }
+  else {
+    RCLCPP_INFO(get_logger(),
+      "LocalizePoseCallback: Received initial pose callback "
+      "outside of localization mode. will start processing near pose.");
+
+    resetSlam();
+
+    boost::mutex::scoped_lock l(pose_mutex_);
+    processor_type_ = PROCESS_NEAR_REGION;
+    process_near_pose_ = std::make_unique<Pose2>(msg->pose.pose.position.x,
+      msg->pose.pose.position.y, tf2::getYaw(msg->pose.pose.orientation));
+  }
+}
+
 /*****************************************************************************/
 void MapAndLocalizationSlamToolbox::laserCallback(
   sensor_msgs::msg::LaserScan::ConstSharedPtr scan)
