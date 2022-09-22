@@ -21,6 +21,10 @@
 
 #include <string>
 
+#include "Eigen/Core"
+#include "karto_sdk/Karto.h"
+#include "rclcpp/rclcpp.hpp"
+#include "slam_toolbox/toolbox_types.hpp"
 #include "visualization_msgs/msg/marker.hpp"
 #include "visualization_msgs/msg/interactive_marker.hpp"
 #include "visualization_msgs/msg/interactive_marker_feedback.hpp"
@@ -139,6 +143,8 @@ inline void toNavMap(
     }
   }
 }
+
+visualization_msgs::msg::Marker toCovarianceMarker(const karto::Edge<karto::LocalizedRangeScan>& edge);
 
 }  // namespace vis_utils
 

@@ -452,7 +452,7 @@ public:
    * Gets the link info
    * @return link info
    */
-  inline EdgeLabel * GetLabel()
+  inline EdgeLabel * GetLabel() const
   {
     return m_pLabel;
   }

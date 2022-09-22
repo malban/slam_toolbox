@@ -47,6 +47,8 @@ LoopClosureAssistant::LoopClosureAssistant(
   marker_publisher_ = node_->create_publisher<visualization_msgs::msg::MarkerArray>(
     "slam_toolbox/graph_visualization", rclcpp::QoS(1));
   map_frame_ = node->get_parameter("map_frame").as_string();
+
+  visualize_covariance_ = node_->declare_parameter("visualize_covariance", false);
 }
 
 /*****************************************************************************/
@@ -147,6 +149,15 @@ void LoopClosureAssistant::publishGraph()
     } else {
       edges_marker.points.push_back(p0);
       edges_marker.points.push_back(p1);
+    }
+
+
+    if (visualize_covariance_) {
+      marray.markers.push_back(vis_utils::toCovarianceMarker(*edge));
+      marray.markers.back().header.frame_id = map_frame_;
+      marray.markers.back().header.stamp = node_->now();
+      marray.markers.back().ns = "slam_toolbox_edge_covariance";
+      marray.markers.back().id = marray.markers.size();
     }
   }
 

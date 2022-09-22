@@ -68,6 +68,7 @@ private:
   std::string map_frame_;
   PausedState & state_;
   ProcessType & processor_type_;
+  bool visualize_covariance_;
 };
 
 }   // namespace loop_closure_assistant
