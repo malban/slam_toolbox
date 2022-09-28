@@ -20,6 +20,7 @@
 #include <memory>
 
 #include "slam_toolbox/loop_closure_assistant.hpp"
+#include "solvers/ceres_utils.h"
 
 namespace loop_closure_assistant
 {
@@ -108,8 +109,8 @@ void LoopClosureAssistant::publishGraph()
   edges_marker.type = visualization_msgs::msg::Marker::LINE_LIST;
   edges_marker.pose.orientation.w = 1;
   edges_marker.scale.x = 0.05;
-  edges_marker.color.b = 1;
-  edges_marker.color.a = 1;
+  // edges_marker.color.b = 1;
+  // edges_marker.color.a = 1;
   edges_marker.lifetime = rclcpp::Duration::from_seconds(0);
   edges_marker.points.reserve(edges.size() * 2);
 
@@ -134,12 +135,14 @@ void LoopClosureAssistant::publishGraph()
     geometry_msgs::msg::Point p0;
     p0.x = pose0.GetX();
     p0.y = pose0.GetY();
+    double p0_yaw = pose0.GetHeading();
 
     int target_id = edge->GetTarget()->GetObject()->GetUniqueId();
     const auto & pose1 = edge->GetTarget()->GetObject()->GetCorrectedPose();
     geometry_msgs::msg::Point p1;
     p1.x = pose1.GetX();
     p1.y = pose1.GetY();
+    double p1_yaw = pose1.GetHeading();
 
     if (source_id >= first_localization_id || target_id >= first_localization_id) {
       localization_edges_marker.points.push_back(p0);
@@ -147,6 +150,32 @@ void LoopClosureAssistant::publishGraph()
     } else {
       edges_marker.points.push_back(p0);
       edges_marker.points.push_back(p1);
+
+      // update the edge marker color based on the current residual value
+      karto::LinkInfo * pLinkInfo = (karto::LinkInfo *)(edge->GetLabel());
+      karto::Pose2 diff = pLinkInfo->GetPoseDifference();
+      Eigen::Vector3d pose2d(diff.GetX(), diff.GetY(), diff.GetHeading());
+
+      karto::Matrix3 precisionMatrix = pLinkInfo->GetCovariance().Inverse();
+      Eigen::Matrix3d information;
+      information(0, 0) = precisionMatrix(0, 0);
+      information(0, 1) = information(1, 0) = precisionMatrix(0, 1);
+      information(0, 2) = information(2, 0) = precisionMatrix(0, 2);
+      information(1, 1) = precisionMatrix(1, 1);
+      information(1, 2) = information(2, 1) = precisionMatrix(1, 2);
+      information(2, 2) = precisionMatrix(2, 2);
+      Eigen::Matrix3d sqrt_information = information.llt().matrixU();
+
+      auto error_function = PoseGraph2dErrorTerm(pose2d(0), pose2d(1), pose2d(2), sqrt_information);
+      double residuals[3];
+      error_function(&p0.x, &p0.y, &p0_yaw, &p1.x, &p1.y, &p1_yaw, &residuals[0]);
+      // TODO: The residual as a vector but we need a scalar to visualize, so using arbitrary weights atm.
+      double residual_value = std::abs(residuals[0]) + std::abs(residuals[1]) + std::abs(residuals[2]);
+      const double min_residual = 0.0;
+      const double max_residual = 10.0;
+      residual_value = std::min(max_residual, std::max(min_residual, residual_value));
+      // convert the residual to a color
+      edges_marker.colors.push_back(vis_utils::getColorScale(residual_value / max_residual));
     }
   }
 

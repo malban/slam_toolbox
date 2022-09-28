@@ -193,19 +193,19 @@ inline double slerp(double start, double end, double range, double value)
   return start + (((end - start) / range) * value);
 }
 
-inline std_msgs::msg::ColorRGBA getColorScale(const float input_value)
+inline std_msgs::msg::ColorRGBA getColorScale(const double input_value)
 {
-  float value = input_value;
+  double value = input_value;
    // User warning
-   if (value < 0)
+   if (value < 0.0)
    {
      std::cout << "Intensity value for color scale is below range [0,1], value: " << value << std::endl;
-     value = 0;
+     value = 0.0;
    }
-   else if (value > 1)
+   else if (value > 1.0)
    {
      std::cout << "Intensity value for color scale is above range [0,1], value: " << value << std::endl;
-     value = 1;
+     value = 1.0;
    }
  
    std_msgs::msg::ColorRGBA start;
