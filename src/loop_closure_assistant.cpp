@@ -113,6 +113,7 @@ void LoopClosureAssistant::publishGraph()
   // edges_marker.color.a = 1;
   edges_marker.lifetime = rclcpp::Duration::from_seconds(0);
   edges_marker.points.reserve(edges.size() * 2);
+  edges_marker.colors.reserve(edges.size() * 2);
 
   visualization_msgs::msg::Marker localization_edges_marker;
   localization_edges_marker.header.frame_id = map_frame_;
@@ -174,8 +175,10 @@ void LoopClosureAssistant::publishGraph()
       const double min_residual = 0.0;
       const double max_residual = 10.0;
       residual_value = std::min(max_residual, std::max(min_residual, residual_value));
-      // convert the residual to a color
-      edges_marker.colors.push_back(vis_utils::getColorScale(residual_value / max_residual));
+      // convert the residual to a color (need one per point)
+      auto residual_color = vis_utils::getColorScale(residual_value / max_residual);
+      edges_marker.colors.push_back(residual_color);
+      edges_marker.colors.push_back(residual_color);
     }
   }
 
