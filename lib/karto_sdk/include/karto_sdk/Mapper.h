@@ -1228,10 +1228,6 @@ public:
     cv::cvtColor(grid_image, grid_image, cv::COLOR_GRAY2BGR);
     const PointVectorDouble & rPointReadings = pScan->GetPointReadings();
 
-    // compute transform to scan pose
-    Transform transform(pScan->GetSensorPose());
-    const Vector2<kt_double> & rGridOffset = GetCoordinateConverter()->GetOffset();
-
     kt_int32u readingIndex = 0;
     const_forEach(PointVectorDouble, &rPointReadings)
     {
@@ -1242,8 +1238,7 @@ public:
         continue;
       }
       // do inverse transform to get points in local coordinates
-      Pose2 vec = transform.InverseTransformPose(Pose2(*iter, 0.0));
-      Vector2<kt_int32s> gridPoint = WorldToGrid(rGridOffset + Vector2<kt_double>(vec.GetX(), vec.GetY()));
+      Vector2<kt_int32s> gridPoint = WorldToGrid(*iter);
       cv::circle(grid_image, {gridPoint.GetY(), gridPoint.GetX()}, 2, {0,0,255}, -1);
       readingIndex++;
     }
