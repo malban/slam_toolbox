@@ -27,7 +27,7 @@
 #include <utility>
 #include <string>
 
-#include <opencv4/opencv2/core.hpp>
+#include <opencv4/opencv2/imgproc.hpp>
 #include <opencv4/opencv2/imgcodecs.hpp>
 
 #include "tbb/parallel_for_each.h"
@@ -943,6 +943,11 @@ private:
   GraphTraversal<LocalizedRangeScan> * m_pTraversal;
 
   /**
+   * Number of times we have tried to perform a loop closure
+   */
+  int try_loop_closure_count_;
+
+  /**
    * Serialization: class MapperGraph
    */
   friend class boost::serialization::access;
@@ -1208,7 +1213,7 @@ public:
     }
   }
 
-  void saveGrid(const std::string& path){
+  void saveGridWithScanOverlay(const std::string& path, LocalizedRangeScan* pScan){
     // create a cv::Mat from the grid   
     cv::Size grid_size{m_Roi.GetWidth(), m_Roi.GetHeight()}; 
     cv::Mat grid_image(grid_size, CV_8UC1);
@@ -1218,6 +1223,31 @@ public:
         grid_image_row_ptr[col] = GetValue({static_cast<int32_t>(row), static_cast<int32_t>(col)});
       }
     }
+
+    // overlay the scan onto the grid
+    cv::cvtColor(grid_image, grid_image, cv::COLOR_GRAY2BGR);
+    const PointVectorDouble & rPointReadings = pScan->GetPointReadings();
+
+    // compute transform to scan pose
+    Transform transform(pScan->GetSensorPose());
+    const Vector2<kt_double> & rGridOffset = GetCoordinateConverter()->GetOffset();
+
+    kt_int32u readingIndex = 0;
+    const_forEach(PointVectorDouble, &rPointReadings)
+    {
+      if (std::isnan(pScan->GetRangeReadings()[readingIndex]) ||
+        std::isinf(pScan->GetRangeReadings()[readingIndex]))
+      {
+        readingIndex++;
+        continue;
+      }
+      // do inverse transform to get points in local coordinates
+      Pose2 vec = transform.InverseTransformPose(Pose2(*iter, 0.0));
+      Vector2<kt_int32s> gridPoint = WorldToGrid(rGridOffset + Vector2<kt_double>(vec.GetX(), vec.GetY()));
+      cv::circle(grid_image, {gridPoint.GetY(), gridPoint.GetX()}, 2, {0,0,255}, -1);
+      readingIndex++;
+    }
+
     // write the cv::Mat to given file path
     cv::imwrite(path, grid_image);
   }
