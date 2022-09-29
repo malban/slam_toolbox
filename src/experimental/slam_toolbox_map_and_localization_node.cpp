@@ -14,13 +14,30 @@
  *
  */
 
-#include "slam_toolbox/experimental/slam_toolbox_map_and_localization.hpp"
+#include <iostream>
 #include <memory>
+#include <sched.h>
+
+#include "slam_toolbox/experimental/slam_toolbox_map_and_localization.hpp"
 
 int main(int argc, char** argv)
 {
   // Almost highest priority
   int new_nice_value = nice(-19);
+
+    // Use core 5 and 6 which is an arm cortex-A72
+  const pid_t pid = getpid();
+ 
+  cpu_set_t cpuset;
+  CPU_ZERO(&cpuset);
+  CPU_SET(4, &cpuset);
+  CPU_SET(5, &cpuset);
+ 
+  const int set_result = sched_setaffinity(pid, sizeof(cpu_set_t), &cpuset);
+  if (set_result != 0) {
+
+    std::cerr << "sched_setaffinity error: " << std::to_string(set_result) << std::endl;
+  }
 
   rclcpp::init(argc, argv);
 
