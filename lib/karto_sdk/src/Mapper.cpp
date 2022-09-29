@@ -2241,7 +2241,7 @@ void MapperGraph::UpdateLoopScanMatcher(kt_double rangeThreshold)
  */
 Mapper::Mapper()
   : Module("Mapper"), m_Initialized(false), m_Deserialized(false), m_pSequentialScanMatcher(NULL),
-    m_pMapperSensorManager(NULL), m_pGraph(NULL), m_pScanOptimizer(NULL)
+    m_pMapperSensorManager(NULL), m_pGraph(NULL), m_pScanOptimizer(NULL), try_loop_closure_count_(0)
 {
   InitializeParameters();
 }
@@ -2251,7 +2251,7 @@ Mapper::Mapper()
  */
 Mapper::Mapper(const std::string& rName)
   : Module(rName), m_Initialized(false), m_Deserialized(false), m_pSequentialScanMatcher(NULL),
-    m_pMapperSensorManager(NULL), m_pGraph(NULL), m_pScanOptimizer(NULL)
+    m_pMapperSensorManager(NULL), m_pGraph(NULL), m_pScanOptimizer(NULL), try_loop_closure_count_(0)
 {
   InitializeParameters();
 }
