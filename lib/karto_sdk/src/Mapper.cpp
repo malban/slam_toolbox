@@ -590,10 +590,6 @@ kt_double ScanMatcher::MatchScan(LocalizedRangeScan* pScan, const T& rBaseScans,
   // set up correlation grid
   AddScans(rBaseScans, scanPose.GetPosition());
 
-  // save correlation grid + scan overlay to file
-  std::string grid_file_path = "/tmp/loop_closure_" + std::to_string(0) + "_candidate_chain_" + std::to_string(0) + ".png";
-  m_pCorrelationGrid->saveGridWithScanOverlay(grid_file_path, pScan);
-
   // compute how far to search in each direction
   Vector2<kt_double> searchDimensions(m_pSearchSpaceProbs->GetWidth(),
                                       m_pSearchSpaceProbs->GetHeight());
@@ -1591,9 +1587,9 @@ kt_bool MapperGraph::TryCloseLoop(LocalizedRangeScan* pScan, const Name& rSensor
     kt_double coarseResponse =
       m_pLoopScanMatcher->MatchScan(pScan, candidateChain, bestPose, covariance, false, false);
 
-    // // save correlation grid + scan overlay to file
-    // std::string grid_file_path = "/tmp/loop_closure_" + std::to_string(try_loop_closure_count_) + "_candidate_chain_" + std::to_string(candidate_chain_id) + ".png";
-    // m_pLoopScanMatcher->GetCorrelationGrid()->saveGridWithScanOverlay(grid_file_path, pScan);
+    // save correlation grid + scan overlay to file
+    std::string grid_file_path = "/tmp/loop_closure_" + std::to_string(try_loop_closure_count_) + "_candidate_chain_" + std::to_string(candidate_chain_id) + ".png";
+    m_pLoopScanMatcher->GetCorrelationGrid()->saveGridWithScanOverlay(grid_file_path, pScan);
 
     std::stringstream stream;
     stream << "COARSE RESPONSE: " << coarseResponse << " (> "
