@@ -27,6 +27,9 @@
 #include <utility>
 #include <string>
 
+#include <opencv4/opencv2/imgproc.hpp>
+#include <opencv4/opencv2/imgcodecs.hpp>
+
 #include "tbb/parallel_for_each.h"
 #include "tbb/parallel_for.h"
 #include "tbb/blocked_range.h"
@@ -940,6 +943,11 @@ private:
   GraphTraversal<LocalizedRangeScan> * m_pTraversal;
 
   /**
+   * Number of times we have tried to perform a loop closure
+   */
+  int try_loop_closure_count_;
+
+  /**
    * Serialization: class MapperGraph
    */
   friend class boost::serialization::access;
@@ -1203,6 +1211,39 @@ public:
         }
       }
     }
+  }
+
+  void saveGridWithScanOverlay(const std::string& path, LocalizedRangeScan* pScan){
+    // create a cv::Mat from the grid   
+    cv::Size grid_size{m_Roi.GetWidth(), m_Roi.GetHeight()}; 
+    cv::Mat grid_image(grid_size, CV_8UC1);
+    for(size_t row = 0; row < grid_image.rows; ++row){
+      uint8_t* grid_image_row_ptr = grid_image.ptr<uint8_t>(row);
+      for(size_t col = 0; col < grid_image.cols; ++col){
+        grid_image_row_ptr[col] = GetValue({static_cast<int32_t>(row), static_cast<int32_t>(col)});
+      }
+    }
+
+    // overlay the scan onto the grid
+    cv::cvtColor(grid_image, grid_image, cv::COLOR_GRAY2BGR);
+    const PointVectorDouble & rPointReadings = pScan->GetPointReadings();
+
+    kt_int32u readingIndex = 0;
+    const_forEach(PointVectorDouble, &rPointReadings)
+    {
+      if (std::isnan(pScan->GetRangeReadings()[readingIndex]) ||
+        std::isinf(pScan->GetRangeReadings()[readingIndex]))
+      {
+        readingIndex++;
+        continue;
+      }
+      Vector2<kt_int32s> gridPoint = WorldToGrid(*iter);
+      cv::circle(grid_image, {gridPoint.GetY(), gridPoint.GetX()}, 2, {0,0,255}, -1);
+      readingIndex++;
+    }
+
+    // write the cv::Mat to given file path
+    cv::imwrite(path, grid_image);
   }
 
 protected:

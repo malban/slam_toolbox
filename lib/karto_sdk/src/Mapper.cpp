@@ -541,7 +541,7 @@ ScanMatcher* ScanMatcher::Create(Mapper* pMapper, kt_double searchSize, kt_doubl
 
 /**
  * Match given scan against set of scans
- * @param rScans scans being scan-matched against the base scans, the first one is used as reference
+ * @param pScan scan being scan-matched
  * @param rBaseScans set of scans whose points will mark cells in grid as being occupied
  * @param rMean output parameter of mean (best pose) of match
  * @param rCovariance output parameter of covariance of match
@@ -1454,7 +1454,7 @@ protected:
 ////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////
 
-MapperGraph::MapperGraph(Mapper* pMapper, kt_double rangeThreshold) : m_pMapper(pMapper)
+MapperGraph::MapperGraph(Mapper* pMapper, kt_double rangeThreshold) : m_pMapper(pMapper), try_loop_closure_count_(0)
 {
   m_pLoopScanMatcher =
     ScanMatcher::Create(pMapper, m_pMapper->m_pLoopSearchSpaceDimension->GetValue(),
@@ -1539,7 +1539,7 @@ void MapperGraph::AddEdges(LocalizedRangeScan* pScan, const Matrix3& rCovariance
       Pose2 bestPose;
       Matrix3 covariance;
       kt_double response = m_pMapper->m_pSequentialScanMatcher->MatchScan<LocalizedRangeScanMap>(
-        {pScan}, pSensorManager->GetScans(rCandidateSensorName), bestPose, covariance);
+        pScan, pSensorManager->GetScans(rCandidateSensorName), bestPose, covariance);
       LinkScans(pScan, pSensorManager->GetScan(rCandidateSensorName, 0), bestPose, covariance);
 
       // only add to means and covariances if response was high "enough"
@@ -1574,6 +1574,7 @@ kt_bool MapperGraph::TryCloseLoop(const LocalizedRangeScanVector& rScanWindow, c
   if (rScanWindow.empty()) {
     return false;
   }
+  try_loop_closure_count_++;
 
   kt_bool loopClosed = false;
 
@@ -1582,6 +1583,7 @@ kt_bool MapperGraph::TryCloseLoop(const LocalizedRangeScanVector& rScanWindow, c
   LocalizedRangeScan* pScan = rScanWindow[0];
 
   LocalizedRangeScanVector candidateChain = FindPossibleLoopClosure(pScan, rSensorName, scanIndex);
+  int candidate_chain_id = 0;
 
   LocalizedRangeScan* pScanAgg = pScan;
 
@@ -1615,11 +1617,16 @@ kt_bool MapperGraph::TryCloseLoop(const LocalizedRangeScanVector& rScanWindow, c
 
   while (!candidateChain.empty())
   {
-    printf("TryCloseLoop: %d\n", __LINE__);
+    candidate_chain_id++;
     Pose2 bestPose;
     Matrix3 covariance;
     kt_double coarseResponse =
       m_pLoopScanMatcher->MatchScan(pScanAgg, candidateChain, bestPose, covariance, false, false);
+
+    // save correlation grid + scan overlay to file
+    std::string grid_file_path = "/tmp/loop_closure_" + std::to_string(try_loop_closure_count_) + "_candidate_chain_" + std::to_string(candidate_chain_id) + ".png";
+    m_pLoopScanMatcher->GetCorrelationGrid()->saveGridWithScanOverlay(grid_file_path, pScan);
+
 
     std::stringstream stream;
     stream << "COARSE RESPONSE: " << coarseResponse << " (> "
