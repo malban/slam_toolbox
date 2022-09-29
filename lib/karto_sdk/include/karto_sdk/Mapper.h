@@ -1237,7 +1237,6 @@ public:
         readingIndex++;
         continue;
       }
-      // do inverse transform to get points in local coordinates
       Vector2<kt_int32s> gridPoint = WorldToGrid(*iter);
       cv::circle(grid_image, {gridPoint.GetY(), gridPoint.GetX()}, 2, {0,0,255}, -1);
       readingIndex++;
