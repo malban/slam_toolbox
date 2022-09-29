@@ -27,6 +27,9 @@
 #include <utility>
 #include <string>
 
+#include <opencv4/opencv2/core.hpp>
+#include <opencv4/opencv2/imgcodecs.hpp>
+
 #include "tbb/parallel_for_each.h"
 #include "tbb/parallel_for.h"
 #include "tbb/blocked_range.h"
@@ -1203,6 +1206,20 @@ public:
         }
       }
     }
+  }
+
+  void saveGrid(const std::string& path){
+    // create a cv::Mat from the grid   
+    cv::Size grid_size{m_Roi.GetWidth(), m_Roi.GetHeight()}; 
+    cv::Mat grid_image(grid_size, CV_8UC1);
+    for(size_t row = 0; row < grid_image.rows; ++row){
+      uint8_t* grid_image_row_ptr = grid_image.ptr<uint8_t>(row);
+      for(size_t col = 0; col < grid_image.cols; ++col){
+        grid_image_row_ptr[col] = GetValue({static_cast<int32_t>(row), static_cast<int32_t>(col)});
+      }
+    }
+    // write the cv::Mat to given file path
+    cv::imwrite(path, grid_image);
   }
 
 protected:

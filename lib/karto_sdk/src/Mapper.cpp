@@ -590,6 +590,9 @@ kt_double ScanMatcher::MatchScan(LocalizedRangeScan* pScan, const T& rBaseScans,
   // set up correlation grid
   AddScans(rBaseScans, scanPose.GetPosition());
 
+  // save correlation grid for debugging
+  m_pCorrelationGrid->saveGrid("/home/jjdang/Desktop/testing.png");  
+
   // compute how far to search in each direction
   Vector2<kt_double> searchDimensions(m_pSearchSpaceProbs->GetWidth(),
                                       m_pSearchSpaceProbs->GetHeight());
