@@ -19,6 +19,9 @@
 
 int main(int argc, char** argv)
 {
+  // Almost highest priority
+  int new_nice_value = nice(-19);
+
   rclcpp::init(argc, argv);
 
   int stack_size = 40000000;

@@ -3231,6 +3231,15 @@ kt_bool Mapper::ProcessLocalization(LocalizedRangeScan* pScan, Matrix3* covarian
 
     m_pMapperSensorManager->SetLastScan(pScan);
     AddScanToLocalizationBuffer(pScan, scan_vertex);
+    // if the oldest localization vertex is a bridge between the mapping and localization graphs, convert it to a mapping
+    // vertex
+    if(m_LocalizationScanVertices.size() >= getParamScanBufferSize() && cutsLocalizationAndMappingGraphs(m_LocalizationScanVertices.front())){
+      // freeze vertex in the scan solver
+      karto::LocalizationScanVertex cut_vertex = m_LocalizationScanVertices.front();
+      m_pScanOptimizer->SetNodeConstant(cut_vertex.vertex->GetObject()->GetUniqueId());
+      // remove from localization buffer
+      m_LocalizationScanVertices.pop_front();
+    }
   }
 
   return true;

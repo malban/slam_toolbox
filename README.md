@@ -258,6 +258,8 @@ The following settings and options are exposed to you. My default configuration 
 
 `minimum_travel_distance` - Minimum distance of travel before processing a new scan into the map, or adding a scan to the queue for processing in sync or localization modes.
 
+`visualize_edge_residuals` - If true, the edges of the mapping graph will be colorized in rviz based on the edge residuals (green: low error, red: high error). Default: false.
+
 ## Matcher Params
 
 `use_scan_matching` - whether to use scan matching to refine odometric pose (uh, why would you not?)

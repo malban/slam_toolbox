@@ -20,6 +20,7 @@
 #include <memory>
 
 #include "slam_toolbox/loop_closure_assistant.hpp"
+#include "solvers/ceres_utils.h"
 
 namespace loop_closure_assistant
 {
@@ -37,6 +38,9 @@ LoopClosureAssistant::LoopClosureAssistant(
 {
   node_->declare_parameter("paused_processing", false);
   node_->set_parameter(rclcpp::Parameter("paused_processing", false));
+
+  node_->declare_parameter("visualize_edge_residuals", false);
+  node_->get_parameter_or("visualize_edge_residuals", visualize_edge_residuals_, false);
 
   tfB_ = std::make_unique<tf2_ros::TransformBroadcaster>(node_);
   solver_ = mapper_->getScanSolver();
@@ -110,10 +114,14 @@ void LoopClosureAssistant::publishGraph()
   edges_marker.type = visualization_msgs::msg::Marker::LINE_LIST;
   edges_marker.pose.orientation.w = 1;
   edges_marker.scale.x = 0.05;
-  edges_marker.color.b = 1;
-  edges_marker.color.a = 1;
   edges_marker.lifetime = rclcpp::Duration::from_seconds(0);
   edges_marker.points.reserve(edges.size() * 2);
+  if(visualize_edge_residuals_){
+    edges_marker.colors.reserve(edges.size() * 2);
+  }else{
+    edges_marker.color.b = 1;
+    edges_marker.color.a = 1;
+  }
 
   visualization_msgs::msg::Marker localization_edges_marker;
   localization_edges_marker.header.frame_id = map_frame_;
@@ -149,6 +157,17 @@ void LoopClosureAssistant::publishGraph()
     } else {
       edges_marker.points.push_back(p0);
       edges_marker.points.push_back(p1);
+      if(visualize_edge_residuals_){
+        double residual_value = computeEdgeResidual(pose0, pose1, edge);
+        const double min_residual = 0.0;
+        const double max_residual = 2.0;
+        residual_value = std::min(max_residual, std::max(min_residual, residual_value));
+        // convert the residual to a color (need one per point)
+        // color code transitions from green (low residual) to red (high residual)
+        auto residual_color = vis_utils::getColorScale(1.0 - (residual_value / max_residual));
+        edges_marker.colors.push_back(residual_color);
+        edges_marker.colors.push_back(residual_color);        
+      }
     }
 
 
@@ -203,6 +222,41 @@ void LoopClosureAssistant::setMapper(karto::Mapper * mapper)
 /*****************************************************************************/
 {
   mapper_ = mapper;
+}
+
+/*****************************************************************************/
+double LoopClosureAssistant::computeEdgeResidual(const karto::Pose2& source_pose,
+                                                 const karto::Pose2& target_pose,
+                                                 karto::Edge<karto::LocalizedRangeScan>* edge) const
+/*****************************************************************************/
+{
+  // update the edge marker color based on the current residual value
+  karto::LinkInfo* pLinkInfo = (karto::LinkInfo*)(edge->GetLabel());
+  karto::Pose2 diff          = pLinkInfo->GetPoseDifference();
+  Eigen::Vector3d pose2d(diff.GetX(), diff.GetY(), diff.GetHeading());
+
+  karto::Matrix3 precisionMatrix = pLinkInfo->GetCovariance().Inverse();
+  Eigen::Matrix3d information;
+  information(0, 0) = precisionMatrix(0, 0);
+  information(0, 1) = information(1, 0) = precisionMatrix(0, 1);
+  information(0, 2) = information(2, 0) = precisionMatrix(0, 2);
+  information(1, 1)                     = precisionMatrix(1, 1);
+  information(1, 2) = information(2, 1) = precisionMatrix(1, 2);
+  information(2, 2)                     = precisionMatrix(2, 2);
+  Eigen::Matrix3d sqrt_information      = information.llt().matrixU();
+
+  auto error_function = PoseGraph2dErrorTerm(pose2d(0), pose2d(1), pose2d(2), sqrt_information);
+  const double x0     = source_pose.GetX();
+  const double y0     = source_pose.GetY();
+  const double yaw0   = source_pose.GetHeading();
+  const double x1     = target_pose.GetX();
+  const double y1     = target_pose.GetY();
+  const double yaw1   = target_pose.GetHeading();
+  double residuals[3];
+  error_function(&x0, &y0, &yaw0, &x1, &y1, &yaw1, &residuals[0]);
+  // TODO: The residual is a vector but we need a scalar to visualize, so using arbitrary weights
+  // atm.
+  return std::abs(residuals[0]) + std::abs(residuals[1]) + std::abs(residuals[2]);
 }
 
 }  // namespace loop_closure_assistant

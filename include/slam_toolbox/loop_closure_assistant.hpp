@@ -55,6 +55,8 @@ private:
 
   void moveNode(const int& id, const Eigen::Vector3d& pose);
   void addMovedNodes(const int& id, Eigen::Vector3d vec);
+  double computeEdgeResidual(const karto::Pose2& source_pose, const karto::Pose2& target_pose,
+                             karto::Edge<karto::LocalizedRangeScan>* edge) const;
 
   std::unique_ptr<tf2_ros::TransformBroadcaster> tfB_;
   laser_utils::ScanHolder * scan_holder_;
@@ -69,6 +71,7 @@ private:
   PausedState & state_;
   ProcessType & processor_type_;
   bool visualize_covariance_;
+  bool visualize_edge_residuals_;
 };
 
 }   // namespace loop_closure_assistant
