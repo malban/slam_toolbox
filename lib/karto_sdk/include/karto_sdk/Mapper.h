@@ -752,10 +752,10 @@ public:
 
   /**
    * Tries to close a loop using the given scan with the scans from the given device
-   * @param pScan
+   * @param rScanWindow
    * @param rSensorName
    */
-  kt_bool TryCloseLoop(LocalizedRangeScan * pScan, const Name & rSensorName);
+  kt_bool TryCloseLoop(const LocalizedRangeScanVector& rScanWindow, const Name & rSensorName);
 
   /**
    * Optimizes scan poses
@@ -1355,11 +1355,6 @@ public:
 
 public:
   /**
-   * Parallelize scan matching
-   */
-  void operator()(const kt_double & y) const;
-
-  /**
    * Create a scan matcher with the given parameters
    */
   static ScanMatcher * Create(
@@ -1371,7 +1366,7 @@ public:
 
   /**
    * Match given scan against set of scans
-   * @param pScan scan being scan-matched
+   * @param pScans scan to match against correlation grid
    * @param rBaseScans set of scans whose points will mark cells in grid as being occupied
    * @param rMean output parameter of mean (best pose) of match
    * @param rCovariance output parameter of covariance of match
@@ -1461,6 +1456,11 @@ public:
   }
 
 private:
+  /**
+   * Parallelize scan matching
+   */
+  void match(const kt_double & y) const;
+
   /**
    * Marks cells where scans' points hit as being occupied
    * @param rScans scans whose points will mark cells in grid as being occupied
@@ -2108,12 +2108,12 @@ public:
 
   /**
    * Tries to close a loop using the given scan with the scans from the given sensor
-   * @param pScan
+   * @param rScanWindow
    * @param rSensorName
    */
-  inline kt_bool TryCloseLoop(LocalizedRangeScan * pScan, const Name & rSensorName)
+  inline kt_bool TryCloseLoop(const LocalizedRangeScanVector& rScanWindow, const Name & rSensorName)
   {
-    return m_pGraph->TryCloseLoop(pScan, rSensorName);
+    return m_pGraph->TryCloseLoop(rScanWindow, rSensorName);
   }
 
   inline void CorrectPoses()
@@ -2292,6 +2292,13 @@ protected:
   Parameter<kt_bool> * m_pDoLoopClosing;
 
   /**
+   * Number of sequential scans from the scan buffer to aggregate when performing a loop closure
+   * detection against the graph.
+   * Default value is 1.
+   */
+  Parameter<kt_int32u> * m_pLoopMatchScanWindow;
+
+  /**
    * Scans less than this distance from the current position will be considered for a match
    * in loop closure.
    * Default value is 4.0 meters.
@@ -2324,6 +2331,8 @@ protected:
    * Default value is 0.7.
    */
   Parameter<kt_double> * m_pLoopMatchMinimumResponseFine;
+
+  Parameter<kt_double> * m_pMatchDegeneracyThreshold;
 
   //////////////////////////////////////////////////////////////////////////////
   //    CorrelationParameters correlationParameters;
@@ -2417,11 +2426,13 @@ protected:
     ar & BOOST_SERIALIZATION_NVP(m_pLinkMatchMinimumResponseFine);
     ar & BOOST_SERIALIZATION_NVP(m_pLinkScanMaximumDistance);
     ar & BOOST_SERIALIZATION_NVP(m_pDoLoopClosing);
+    ar & BOOST_SERIALIZATION_NVP(m_pLoopMatchScanWindow);
     ar & BOOST_SERIALIZATION_NVP(m_pLoopSearchMaximumDistance);
     ar & BOOST_SERIALIZATION_NVP(m_pLoopMatchMinimumChainSize);
     ar & BOOST_SERIALIZATION_NVP(m_pLoopMatchMaximumVarianceCoarse);
     ar & BOOST_SERIALIZATION_NVP(m_pLoopMatchMinimumResponseCoarse);
     ar & BOOST_SERIALIZATION_NVP(m_pLoopMatchMinimumResponseFine);
+    ar & BOOST_SERIALIZATION_NVP(m_pMatchDegeneracyThreshold);
     ar & BOOST_SERIALIZATION_NVP(m_pCorrelationSearchSpaceDimension);
     ar & BOOST_SERIALIZATION_NVP(m_pCorrelationSearchSpaceResolution);
     ar & BOOST_SERIALIZATION_NVP(m_pCorrelationSearchSpaceSmearDeviation);
@@ -2455,10 +2466,12 @@ public:
   double getParamLinkScanMaximumDistance();
   double getParamLoopSearchMaximumDistance();
   bool getParamDoLoopClosing();
+  int getParamLoopMatchScanWindow();
   int getParamLoopMatchMinimumChainSize();
   double getParamLoopMatchMaximumVarianceCoarse();
   double getParamLoopMatchMinimumResponseCoarse();
   double getParamLoopMatchMinimumResponseFine();
+  double getParamMatchDegeneracyThreshold();
 
   // Correlation Parameters - Correlation Parameters
   double getParamCorrelationSearchSpaceDimension();
@@ -2493,10 +2506,12 @@ public:
   void setParamLinkScanMaximumDistance(double d);
   void setParamLoopSearchMaximumDistance(double d);
   void setParamDoLoopClosing(bool b);
+  void setParamLoopMatchScanWindow(int i);
   void setParamLoopMatchMinimumChainSize(int i);
   void setParamLoopMatchMaximumVarianceCoarse(double d);
   void setParamLoopMatchMinimumResponseCoarse(double d);
   void setParamLoopMatchMinimumResponseFine(double d);
+  void setParamMatchDegeneracyThreshold(double d);
 
   // Correlation Parameters - Correlation Parameters
   void setParamCorrelationSearchSpaceDimension(double d);

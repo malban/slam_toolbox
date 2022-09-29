@@ -32,6 +32,7 @@
 namespace vis_utils
 {
 
+
 inline visualization_msgs::msg::Marker toMarker(
   const std::string & frame,
   const std::string & ns,
@@ -143,6 +144,11 @@ inline void toNavMap(
     }
   }
 }
+
+
+visualization_msgs::msg::Marker toArrowMarker(const karto::Pose2& pose, const double & scale);
+
+visualization_msgs::msg::Marker toSphereMarker(const karto::Pose2& pose, const double & scale);
 
 visualization_msgs::msg::Marker toCovarianceMarker(const karto::Edge<karto::LocalizedRangeScan>& edge);
 

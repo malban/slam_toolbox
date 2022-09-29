@@ -16,12 +16,57 @@
 
 #include <cmath>
 
-#include "Eigen/SVD"
+#include "Eigen/Geometry"
+#include "Eigen/Eigenvalues"
 #include "slam_toolbox/visualization_utils.hpp"
-#include "tf2_geometry_msgs/tf2_geometry_msgs.h"
+#include "tf2_geometry_msgs/tf2_geometry_msgs.hpp"
 
 namespace vis_utils
 {
+
+visualization_msgs::msg::Marker toArrowMarker(const karto::Pose2& pose, const double & scale)
+{
+  visualization_msgs::msg::Marker marker;
+
+  marker.type = visualization_msgs::msg::Marker::ARROW;
+  marker.pose.position.x = pose.GetX();
+  marker.pose.position.y = pose.GetY();
+
+  tf2::Quaternion rotation;
+  rotation.setRPY(0, 0, pose.GetHeading());
+  marker.pose.orientation = tf2::toMsg(rotation);
+
+  marker.scale.x = scale;
+  marker.scale.y = scale * 0.1;
+  marker.scale.z = scale * 0.1;
+  marker.color.r = 1.0;
+  marker.color.g = 0;
+  marker.color.b = 0.0;
+  marker.color.a = 1.;
+  marker.action = visualization_msgs::msg::Marker::ADD;
+
+  return marker;
+}
+
+visualization_msgs::msg::Marker toSphereMarker(const karto::Pose2& pose, const double & scale)
+{
+  visualization_msgs::msg::Marker marker;
+
+  marker.type = visualization_msgs::msg::Marker::SPHERE;
+  marker.pose.position.x = pose.GetX();
+  marker.pose.position.y = pose.GetY();
+  marker.pose.orientation.w = 1;
+  marker.scale.x = scale;
+  marker.scale.y = scale;
+  marker.scale.z = scale;
+  marker.color.r = 1;
+  marker.color.g = 0;
+  marker.color.b = 0;
+  marker.color.a = 1;
+  marker.action = visualization_msgs::msg::Marker::ADD;
+
+  return marker;
+}
 
 visualization_msgs::msg::Marker toCovarianceMarker(const karto::Edge<karto::LocalizedRangeScan>& edge)
 {
@@ -44,15 +89,18 @@ visualization_msgs::msg::Marker toCovarianceMarker(const karto::Edge<karto::Loca
   Eigen::Matrix2d A;
   A << cov(0, 0), cov(0, 1), cov(1, 0), cov(1, 1);
 
-  Eigen::JacobiSVD<Eigen::Matrix2d> svd(A, Eigen::ComputeFullV);
+  Eigen::EigenSolver<Eigen::Matrix2d> solver(A);
 
-  Eigen::Vector2d Sigma = svd.singularValues();
-  Eigen::Matrix2d Vt = svd.matrixV().transpose();
+  auto eigen_values = solver.eigenvalues();
+  auto eigen_vector = solver.eigenvectors().col(0);
 
-  marker.scale.x = std::sqrt(Sigma(0));
-  marker.scale.y = std::sqrt(Sigma(1));
+  Eigen::Vector2d axis(eigen_vector[0].real(), eigen_vector[1].real());
 
-  double angle = std::atan2(Vt(1, 0), Vt(0, 0));
+  marker.scale.x = std::sqrt(eigen_values[0].real());
+  marker.scale.y = std::sqrt(eigen_values[1].real());
+
+  double angle = -std::atan2(axis[1], axis[0]);
+
   tf2::Quaternion rotation;
   rotation.setRPY(0, 0, pose0.GetHeading() - angle);
   marker.pose.orientation =  tf2::toMsg(rotation);

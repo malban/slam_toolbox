@@ -2665,6 +2665,21 @@ public:
   }
 
   /**
+   * Matrix3 and Vector2 multiplication - matrix * pose [3x3 * 3x1 = 3x1]
+   * @param rPose2
+   * @return Pose2 product
+   */
+  inline Vector2<kt_double> operator*(const Vector2<kt_double> & rVector2) const
+  {
+    Vector2<kt_double> vector2;
+
+    vector2.SetX(m_Matrix[0][0] * rVector2.GetX() + m_Matrix[0][1] * rVector2.GetY());
+    vector2.SetY(m_Matrix[1][0] * rVector2.GetX() + m_Matrix[1][1] * rVector2.GetY());
+
+    return vector2;
+  }
+
+  /**
    * In place Matrix3 add.
    * @param rkMatrix
    */
@@ -2976,6 +2991,11 @@ public:
     kt_double angle = math::NormalizeAngle(rSourcePose.GetHeading() + m_Transform.GetHeading());
 
     return Pose2(newPosition.GetPosition(), angle);
+  }
+
+  inline Vector2<kt_double> TransformPoint(const Vector2<kt_double> & point)
+  {
+    return m_Transform.GetPosition() + m_Rotation * point;
   }
 
   /**
@@ -5539,7 +5559,7 @@ public:
     return GetSensorAt(m_CorrectedPose);
   }
 
-  inline void SetIsDirty(kt_bool & rIsDirty)
+  inline void SetIsDirty(kt_bool rIsDirty)
   {
     m_IsDirty = rIsDirty;
   }
@@ -5550,9 +5570,11 @@ public:
    */
   void SetSensorPose(const Pose2& rScanPose)
   {
+    printf("SetSensorPose: %d\n", __LINE__);
     m_CorrectedPose = GetCorrectedAt(rScanPose);
-
+    printf("SetSensorPose: %d\n", __LINE__);
     Update();
+    printf("SetSensorPose: %d\n", __LINE__);
   }
 
   /**
@@ -6880,8 +6902,6 @@ private:
     kt_int32u readingIndex = 0;
 
     kt_int32s * pAngleIndexPointer = m_ppLookupArray[angleIndex]->GetArrayPointer();
-
-    kt_double maxRange = pScan->GetLaserRangeFinder()->GetMaximumRange();
 
     const_forEach(Pose2Vector, &rLocalPoints)
     {

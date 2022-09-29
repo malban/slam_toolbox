@@ -199,6 +199,13 @@ void SMapper::configure(const rclcpp::Node::SharedPtr & node)
   node->get_parameter("loop_match_minimum_response_fine", loop_match_minimum_response_fine);
   mapper_->setParamLoopMatchMinimumResponseFine(loop_match_minimum_response_fine);
 
+  double match_degeneracy_threshold = 1.0;
+  if (!node->has_parameter("match_degeneracy_threshold")) {
+    node->declare_parameter("match_degeneracy_threshold", match_degeneracy_threshold);
+  }
+  node->get_parameter("match_degeneracy_threshold", match_degeneracy_threshold);
+  mapper_->setParamMatchDegeneracyThreshold(match_degeneracy_threshold);
+
   // Setting Correlation Parameters
   double correlation_search_space_dimension = 0.5;
   if (!node->has_parameter("correlation_search_space_dimension")) {

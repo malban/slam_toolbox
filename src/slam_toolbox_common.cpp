@@ -626,7 +626,7 @@ LocalizedRangeScan* SlamToolbox::addScan(LaserRangeFinder* laser,
       range_scan->SetCorrectedPose(range_scan->GetOdometricPose());
       process_near_pose_.reset(nullptr);
     }
-    processed = smapper_->getMapper()->Process(range_scan, &covariance);
+    processed = smapper_->getMapper()->Process(range_scan, &covariance, false);
 
     // if the scan was not processed into the map because of insuffcient travel
     // distance, then check if enough time as passed to just perform a scan
@@ -668,7 +668,7 @@ LocalizedRangeScan* SlamToolbox::addScan(LaserRangeFinder* laser,
   }
   else if (processor_type_ == PROCESS_LOCALIZATION)
   {
-    processed = smapper_->getMapper()->ProcessLocalization(range_scan, &covariance, match_only);
+    processed = smapper_->getMapper()->ProcessLocalization(range_scan, &covariance, false);
 
     rclcpp::Time stamp = scan->header.stamp;
     bool match_only    = !processed && maximum_match_interval_.seconds() >= 0.0 &&

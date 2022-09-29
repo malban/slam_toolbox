@@ -155,6 +155,7 @@ protected:
   double resolution_;
   double position_covariance_scale_;
   double yaw_covariance_scale_;
+  double degeneracy_threshold_;
   bool first_measurement_, paused_at_startup_;
 
   // Book keeping
