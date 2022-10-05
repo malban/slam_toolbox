@@ -649,10 +649,10 @@ public:
     }
     m_Vertices.clear();
 
-    forEach(typename std::vector<Edge<T> *>, &m_Edges)
+    for (auto& edge: m_Edges)
     {
-      delete *iter;
-      *iter = nullptr;
+      delete edge;
+      edge = nullptr;
     }
     m_Edges.clear();
   }
@@ -1225,25 +1225,42 @@ public:
     }
 
     // overlay the scan onto the grid
-    cv::cvtColor(grid_image, grid_image, cv::COLOR_GRAY2BGR);
+    cv::Mat color_image;
+    cv::cvtColor(grid_image, color_image, cv::COLOR_GRAY2BGR);
     const PointVectorDouble & rPointReadings = pScan->GetPointReadings();
 
+    size_t num_points = 0;
+    size_t num_valid = 0;
     kt_int32u readingIndex = 0;
     const_forEach(PointVectorDouble, &rPointReadings)
     {
-      if (std::isnan(pScan->GetRangeReadings()[readingIndex]) ||
-        std::isinf(pScan->GetRangeReadings()[readingIndex]))
+      if (!std::isfinite(pScan->GetRangeReadings()[readingIndex]))
       {
         readingIndex++;
         continue;
       }
+
+      num_points++;
       Vector2<kt_int32s> gridPoint = WorldToGrid(*iter);
-      cv::circle(grid_image, {gridPoint.GetY(), gridPoint.GetX()}, 2, {0,0,255}, -1);
+
+      if (gridPoint.GetX() >= 0 && gridPoint.GetX() < grid_image.rows &&
+          gridPoint.GetY() >= 0 && gridPoint.GetY() < grid_image.cols &&
+          grid_image.at<uint8_t>(gridPoint.GetX(),gridPoint.GetY()) > 0)
+      {
+        cv::circle(color_image, {gridPoint.GetY(), gridPoint.GetX()}, 1, {0,255,0}, -1);
+        num_valid++;
+      }
+      else
+      {
+        cv::circle(color_image, {gridPoint.GetY(), gridPoint.GetX()}, 1, {0,0,255}, -1);
+      }
       readingIndex++;
     }
 
+    printf("num_valid: %zu of %zu (%.1lf%%)\n", num_valid, num_points, num_valid * 100.0 / num_points);
+
     // write the cv::Mat to given file path
-    cv::imwrite(path, grid_image);
+    cv::imwrite(path, color_image);
   }
 
 protected:
@@ -1403,7 +1420,9 @@ public:
     kt_double searchSize,
     kt_double resolution,
     kt_double smearDeviation,
-    kt_double rangeThreshold);
+    kt_double rangeThreshold,
+    kt_double degeneracyThreshold = 1.0,
+    kt_double degeneracyScale = 1.0);
 
   /**
    * Match given scan against set of scans
@@ -1421,7 +1440,8 @@ public:
     const T & rBaseScans,
     Pose2 & rMean, Matrix3 & rCovariance,
     kt_bool doPenalize = true,
-    kt_bool doRefineMatch = true);
+    kt_bool doRefineMatch = true,
+    kt_bool doDegeneracyCheck = false);
 
   /**
    * Finds the best pose for the scan centering the search in the correlation grid
@@ -1565,6 +1585,8 @@ private:
   kt_int32u m_nAngles;
   kt_double m_searchAngleResolution;
   kt_bool m_doPenalize;
+  kt_double m_degeneracyThreshold;
+  kt_double m_degeneracyScale;
 
   /**
    * Serialization: class ScanMatcher
@@ -1979,7 +2001,12 @@ private:
  *     Default value is 10.
  *
  *  \a LoopMatchMaximumVarianceCoarse (ParameterDouble)\n
- *     The co-variance values for a possible loop closure have to be less than this value
+ *     The primary co-variance value for a possible loop closure has to be less than this value
+ *     to consider a viable solution. This applies to the coarse search.
+ *     Default value is 0.16.
+ *
+ *  \a LoopMatchMaximumSecondaryVarianceCoarse (ParameterDouble)\n
+ *     The secondary co-variance value for a possible loop closure has to be less than this value
  *     to consider a viable solution. This applies to the coarse search.
  *     Default value is 0.16.
  *
@@ -2355,11 +2382,18 @@ protected:
   Parameter<kt_int32u> * m_pLoopMatchMinimumChainSize;
 
   /**
-   * The co-variance values for a possible loop closure have to be less than this value
+   * The primary co-variance value for a possible loop closure has to be less than this value
    * to consider a viable solution. This applies to the coarse search.
    * Default value is 0.16.
    */
   Parameter<kt_double> * m_pLoopMatchMaximumVarianceCoarse;
+
+  /**
+   * The secondart variance value for a possible loop closure has to be less than this value
+   * to consider a viable solution. This applies to the coarse search.
+   * Default value is 0.16.
+   */
+  Parameter<kt_double> * m_pLoopMatchMaximumSecondaryVarianceCoarse;
 
   /**
    * If response is larger then this, then initiate loop closure search at the coarse resolution.
@@ -2471,6 +2505,7 @@ protected:
     ar & BOOST_SERIALIZATION_NVP(m_pLoopSearchMaximumDistance);
     ar & BOOST_SERIALIZATION_NVP(m_pLoopMatchMinimumChainSize);
     ar & BOOST_SERIALIZATION_NVP(m_pLoopMatchMaximumVarianceCoarse);
+    ar & BOOST_SERIALIZATION_NVP(m_pLoopMatchMaximumSecondaryVarianceCoarse);
     ar & BOOST_SERIALIZATION_NVP(m_pLoopMatchMinimumResponseCoarse);
     ar & BOOST_SERIALIZATION_NVP(m_pLoopMatchMinimumResponseFine);
     ar & BOOST_SERIALIZATION_NVP(m_pMatchDegeneracyThreshold);
@@ -2510,6 +2545,7 @@ public:
   int getParamLoopMatchScanWindow();
   int getParamLoopMatchMinimumChainSize();
   double getParamLoopMatchMaximumVarianceCoarse();
+  double getParamLoopMatchMaximumSecondaryVarianceCoarse();
   double getParamLoopMatchMinimumResponseCoarse();
   double getParamLoopMatchMinimumResponseFine();
   double getParamMatchDegeneracyThreshold();
@@ -2550,6 +2586,7 @@ public:
   void setParamLoopMatchScanWindow(int i);
   void setParamLoopMatchMinimumChainSize(int i);
   void setParamLoopMatchMaximumVarianceCoarse(double d);
+  void setParamLoopMatchMaximumSecondaryVarianceCoarse(double d);
   void setParamLoopMatchMinimumResponseCoarse(double d);
   void setParamLoopMatchMinimumResponseFine(double d);
   void setParamMatchDegeneracyThreshold(double d);

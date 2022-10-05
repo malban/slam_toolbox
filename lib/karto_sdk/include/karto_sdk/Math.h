@@ -22,6 +22,7 @@
 #include <math.h>
 #include <limits>
 
+#include "Eigen/Core"
 #include "Types.h"
 
 namespace karto
@@ -236,6 +237,11 @@ inline T AlignValue(size_t value, size_t alignValue = 8)
   return static_cast<T>((value + (alignValue - 1)) & ~(alignValue - 1));
 }
 }  // namespace math
+
+
+Eigen::Matrix2d GetPrincipalComponents(const Eigen::Matrix2d& matrix);
+
+Eigen::Matrix2d GetPrincipalComponents(const std::vector<Eigen::Vector2d>& data);
 
 }  // namespace karto
 

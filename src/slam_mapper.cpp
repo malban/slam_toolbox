@@ -167,6 +167,13 @@ void SMapper::configure(const rclcpp::Node::SharedPtr & node)
   node->get_parameter("do_loop_closing", do_loop_closing);
   mapper_->setParamDoLoopClosing(do_loop_closing);
 
+  int loop_match_scan_window = 1;
+  if (!node->has_parameter("loop_match_scan_window")) {
+    node->declare_parameter("loop_match_scan_window", loop_match_scan_window);
+  }
+  node->get_parameter("loop_match_scan_window", loop_match_scan_window);
+  mapper_->setParamLoopMatchScanWindow(loop_match_scan_window);
+
   int loop_match_minimum_chain_size = 10;
   if (!node->has_parameter("loop_match_minimum_chain_size")) {
     node->declare_parameter("loop_match_minimum_chain_size", loop_match_minimum_chain_size);
@@ -182,6 +189,15 @@ void SMapper::configure(const rclcpp::Node::SharedPtr & node)
   }
   node->get_parameter("loop_match_maximum_variance_coarse", loop_match_maximum_variance_coarse);
   mapper_->setParamLoopMatchMaximumVarianceCoarse(loop_match_maximum_variance_coarse);
+
+  double loop_match_maximum_secondary_variance_coarse = 3.0;
+  if (!node->has_parameter("loop_match_maximum_secondary_variance_coarse")) {
+    node->declare_parameter(
+      "loop_match_maximum_secondary_variance_coarse",
+      loop_match_maximum_secondary_variance_coarse);
+  }
+  node->get_parameter("loop_match_maximum_secondary_variance_coarse", loop_match_maximum_secondary_variance_coarse);
+  mapper_->setParamLoopMatchMaximumSecondaryVarianceCoarse(loop_match_maximum_secondary_variance_coarse);
 
   double loop_match_minimum_response_coarse = 0.35;
   if (!node->has_parameter("loop_match_minimum_response_coarse")) {

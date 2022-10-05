@@ -125,9 +125,9 @@ SensorData::SensorData(const Name & rSensorName)
 
 SensorData::~SensorData()
 {
-  forEach(CustomDataVector, &m_CustomData)
+  for (const auto& data: m_CustomData)
   {
-    delete *iter;
+    delete data;
   }
 
   m_CustomData.clear();
@@ -226,9 +226,9 @@ kt_bool LaserRangeFinder::Validate(SensorData * pSensorData)
 
 void ParameterManager::Clear()
 {
-  forEach(karto::ParameterVector, &m_Parameters)
+  for (const auto& param: m_Parameters)
   {
-    delete *iter;
+    delete param;
   }
 
   m_Parameters.clear();
