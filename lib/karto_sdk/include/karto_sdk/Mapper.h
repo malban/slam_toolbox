@@ -27,9 +27,6 @@
 #include <utility>
 #include <string>
 
-#include <opencv4/opencv2/imgproc.hpp>
-#include <opencv4/opencv2/imgcodecs.hpp>
-
 #include "tbb/parallel_for_each.h"
 #include "tbb/parallel_for.h"
 #include "tbb/blocked_range.h"
@@ -755,10 +752,10 @@ public:
 
   /**
    * Tries to close a loop using the given scan with the scans from the given device
-   * @param rScanWindow
+   * @param pScan
    * @param rSensorName
    */
-  kt_bool TryCloseLoop(const LocalizedRangeScanVector& rScanWindow, const Name & rSensorName);
+  kt_bool TryCloseLoop(LocalizedRangeScan * pScan, const Name & rSensorName);
 
   /**
    * Optimizes scan poses
@@ -941,11 +938,6 @@ private:
    * Traversal algorithm to find near linked scans
    */
   GraphTraversal<LocalizedRangeScan> * m_pTraversal;
-
-  /**
-   * Number of times we have tried to perform a loop closure
-   */
-  int try_loop_closure_count_;
 
   /**
    * Serialization: class MapperGraph
@@ -1213,56 +1205,6 @@ public:
     }
   }
 
-  void saveGridWithScanOverlay(const std::string& path, LocalizedRangeScan* pScan){
-    // create a cv::Mat from the grid   
-    cv::Size grid_size{m_Roi.GetWidth(), m_Roi.GetHeight()}; 
-    cv::Mat grid_image(grid_size, CV_8UC1);
-    for(size_t row = 0; row < grid_image.rows; ++row){
-      uint8_t* grid_image_row_ptr = grid_image.ptr<uint8_t>(row);
-      for(size_t col = 0; col < grid_image.cols; ++col){
-        grid_image_row_ptr[col] = GetValue({static_cast<int32_t>(row), static_cast<int32_t>(col)});
-      }
-    }
-
-    // overlay the scan onto the grid
-    cv::Mat color_image;
-    cv::cvtColor(grid_image, color_image, cv::COLOR_GRAY2BGR);
-    const PointVectorDouble & rPointReadings = pScan->GetPointReadings();
-
-    size_t num_points = 0;
-    size_t num_valid = 0;
-    kt_int32u readingIndex = 0;
-    const_forEach(PointVectorDouble, &rPointReadings)
-    {
-      if (!std::isfinite(pScan->GetRangeReadings()[readingIndex]))
-      {
-        readingIndex++;
-        continue;
-      }
-
-      num_points++;
-      Vector2<kt_int32s> gridPoint = WorldToGrid(*iter);
-
-      if (gridPoint.GetX() >= 0 && gridPoint.GetX() < grid_image.rows &&
-          gridPoint.GetY() >= 0 && gridPoint.GetY() < grid_image.cols &&
-          grid_image.at<uint8_t>(gridPoint.GetX(),gridPoint.GetY()) > 0)
-      {
-        cv::circle(color_image, {gridPoint.GetY(), gridPoint.GetX()}, 1, {0,255,0}, -1);
-        num_valid++;
-      }
-      else
-      {
-        cv::circle(color_image, {gridPoint.GetY(), gridPoint.GetX()}, 1, {0,0,255}, -1);
-      }
-      readingIndex++;
-    }
-
-    printf("num_valid: %zu of %zu (%.1lf%%)\n", num_valid, num_points, num_valid * 100.0 / num_points);
-
-    // write the cv::Mat to given file path
-    cv::imwrite(path, color_image);
-  }
-
 protected:
   /**
    * Constructs a correlation grid of given size and parameters
@@ -1426,7 +1368,7 @@ public:
 
   /**
    * Match given scan against set of scans
-   * @param pScans scan to match against correlation grid
+   * @param pScan scan to match against correlation grid
    * @param rBaseScans set of scans whose points will mark cells in grid as being occupied
    * @param rMean output parameter of mean (best pose) of match
    * @param rCovariance output parameter of covariance of match
@@ -2176,12 +2118,12 @@ public:
 
   /**
    * Tries to close a loop using the given scan with the scans from the given sensor
-   * @param rScanWindow
+   * @param pScan
    * @param rSensorName
    */
-  inline kt_bool TryCloseLoop(const LocalizedRangeScanVector& rScanWindow, const Name & rSensorName)
+  inline kt_bool TryCloseLoop(LocalizedRangeScan * pScan, const Name & rSensorName)
   {
-    return m_pGraph->TryCloseLoop(rScanWindow, rSensorName);
+    return m_pGraph->TryCloseLoop(pScan, rSensorName);
   }
 
   inline void CorrectPoses()
@@ -2360,13 +2302,6 @@ protected:
   Parameter<kt_bool> * m_pDoLoopClosing;
 
   /**
-   * Number of sequential scans from the scan buffer to aggregate when performing a loop closure
-   * detection against the graph.
-   * Default value is 1.
-   */
-  Parameter<kt_int32u> * m_pLoopMatchScanWindow;
-
-  /**
    * Scans less than this distance from the current position will be considered for a match
    * in loop closure.
    * Default value is 4.0 meters.
@@ -2501,7 +2436,6 @@ protected:
     ar & BOOST_SERIALIZATION_NVP(m_pLinkMatchMinimumResponseFine);
     ar & BOOST_SERIALIZATION_NVP(m_pLinkScanMaximumDistance);
     ar & BOOST_SERIALIZATION_NVP(m_pDoLoopClosing);
-    ar & BOOST_SERIALIZATION_NVP(m_pLoopMatchScanWindow);
     ar & BOOST_SERIALIZATION_NVP(m_pLoopSearchMaximumDistance);
     ar & BOOST_SERIALIZATION_NVP(m_pLoopMatchMinimumChainSize);
     ar & BOOST_SERIALIZATION_NVP(m_pLoopMatchMaximumVarianceCoarse);
@@ -2542,7 +2476,6 @@ public:
   double getParamLinkScanMaximumDistance();
   double getParamLoopSearchMaximumDistance();
   bool getParamDoLoopClosing();
-  int getParamLoopMatchScanWindow();
   int getParamLoopMatchMinimumChainSize();
   double getParamLoopMatchMaximumVarianceCoarse();
   double getParamLoopMatchMaximumSecondaryVarianceCoarse();
@@ -2583,7 +2516,6 @@ public:
   void setParamLinkScanMaximumDistance(double d);
   void setParamLoopSearchMaximumDistance(double d);
   void setParamDoLoopClosing(bool b);
-  void setParamLoopMatchScanWindow(int i);
   void setParamLoopMatchMinimumChainSize(int i);
   void setParamLoopMatchMaximumVarianceCoarse(double d);
   void setParamLoopMatchMaximumSecondaryVarianceCoarse(double d);

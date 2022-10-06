@@ -42,7 +42,6 @@
 #include <fstream>
 #include <limits>
 #include <algorithm>
-#include <memory>
 #include <map>
 #include <utility>
 #include <vector>
@@ -5431,8 +5430,6 @@ private:
 class LocalizedRangeScan : public LaserRangeScan
 {
 public:
-  using Ptr = std::shared_ptr<LocalizedRangeScan>;
-
   // @cond EXCLUDE
   KARTO_Object(LocalizedRangeScan)
   // @endcond
@@ -5574,6 +5571,7 @@ public:
   void SetSensorPose(const Pose2& rScanPose)
   {
     m_CorrectedPose = GetCorrectedAt(rScanPose);
+
     Update();
   }
 
@@ -5665,16 +5663,6 @@ public:
     } else {
       m_UnfilteredPointReadings = points;
     }
-  }
-
-  inline void SetPointNormals(const std::vector<Eigen::Vector2d>& normals)
-  {
-    m_Normals = normals;
-  }
-
-  inline const std::vector<Eigen::Vector2d>& GetPointNormals() const
-  {
-    return m_Normals;
   }
 
 private:
@@ -5776,9 +5764,6 @@ private:
    */
   Matrix3 m_Covariance;
 
-
-
-
 protected:
   /**
    * Average of all the point readings
@@ -5794,11 +5779,6 @@ protected:
    * Vector of unfiltered point readings
    */
   PointVectorDouble m_UnfilteredPointReadings;
-
-  /**
-   * Vector of calculated normals for valid point readings
-   */
-  std::vector<Eigen::Vector2d> m_Normals;
 
   /**
    * Bounding box of localized range scan
