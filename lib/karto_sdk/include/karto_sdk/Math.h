@@ -22,6 +22,7 @@
 #include <math.h>
 #include <limits>
 
+#include "Eigen/Core"
 #include "Types.h"
 
 namespace karto
@@ -236,6 +237,35 @@ inline T AlignValue(size_t value, size_t alignValue = 8)
   return static_cast<T>((value + (alignValue - 1)) & ~(alignValue - 1));
 }
 }  // namespace math
+
+/**
+ * Calculate the principal component vectors, i.e. eigen vectors, of a positive
+ * semi-definite matrix.
+ *
+ * This is useful to decompose a 2x2 covariance matrix into orthogonal component
+ * vectors that represent the axes of greatest variability.
+ *
+ * @param[in] matrix  The positive semi-definite matrix.
+ *
+ * @returns The principal component vectors as an array of 2 vectors, where the
+ *          principal component is the first vector, and the orthogonal vector
+ *          is the second vector.  The lengths of the vectors correspond to the
+ *          respective eigen values.
+ */
+std::array<Eigen::Vector2d, 2> GetPrincipalComponents(const Eigen::Matrix2d& matrix);
+
+/**
+ * Calculate the principal component vectors of a set of points.
+ *
+ * @param[in] points     The points.
+ * @param[in] normalize  Whether or not to substract out the mean.
+ *
+ * @returns The principal component vectors as an array of 2 vectors, where the
+ *          principal component is the first vector, and the orthogonal vector
+ *          is the second vector.  The lengths of the vectors correspond to the
+ *          respective singular values.
+ */
+std::array<Eigen::Vector2d, 2> GetPrincipalComponents(const std::vector<Eigen::Vector2d>& data, bool normalize=true);
 
 }  // namespace karto
 

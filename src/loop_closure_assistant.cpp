@@ -47,6 +47,8 @@ LoopClosureAssistant::LoopClosureAssistant(
   marker_publisher_ = node_->create_publisher<visualization_msgs::msg::MarkerArray>(
     "slam_toolbox/graph_visualization", rclcpp::QoS(1));
   map_frame_ = node->get_parameter("map_frame").as_string();
+
+  visualize_covariance_ = node_->declare_parameter("visualize_covariance", false);
 }
 
 /*****************************************************************************/
@@ -82,19 +84,19 @@ void LoopClosureAssistant::publishGraph()
   clear.action = visualization_msgs::msg::Marker::DELETEALL;
   marray.markers.push_back(clear);
 
-  visualization_msgs::msg::Marker m = vis_utils::toMarker(map_frame_, "slam_toolbox", 0.1, node_);
-
   // add map nodes
   for (const auto & sensor_name : vertices) {
     for (const auto & vertex : sensor_name.second) {
+
+      auto m = vis_utils::toSphereMarker(vertex.second->GetObject()->GetCorrectedPose(), 0.1);
+
+      m.header.frame_id = map_frame_;
+      m.header.stamp = clear.header.stamp;
       m.color.g = vertex.first < first_localization_id ? 0.0 : 1.0;
-      const auto & pose = vertex.second->GetObject()->GetCorrectedPose();
       m.id = vertex.first;
-      m.pose.position.x = pose.GetX();
-      m.pose.position.y = pose.GetY();
+      m.ns = "slam_toolbox";
 
       marray.markers.push_back(m);
-
     }
   }
 
@@ -147,6 +149,15 @@ void LoopClosureAssistant::publishGraph()
     } else {
       edges_marker.points.push_back(p0);
       edges_marker.points.push_back(p1);
+    }
+
+
+    if (visualize_covariance_) {
+      marray.markers.push_back(vis_utils::toCovarianceMarker(*edge));
+      marray.markers.back().header.frame_id = map_frame_;
+      marray.markers.back().header.stamp = node_->now();
+      marray.markers.back().ns = "slam_toolbox_edge_covariance";
+      marray.markers.back().id = marray.markers.size();
     }
   }
 

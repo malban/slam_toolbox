@@ -65,8 +65,6 @@
 /**
  * Helper defines for std iterator loops
  */
-#define forEach(listtype, list) \
-  for (listtype::iterator iter = (list)->begin(); iter != (list)->end(); ++iter)
 
 #define forEachAs(listtype, list, iter) \
   for (listtype::iterator iter = (list)->begin(); iter != (list)->end(); ++iter)

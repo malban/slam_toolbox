@@ -452,7 +452,7 @@ public:
    * Gets the link info
    * @return link info
    */
-  inline EdgeLabel * GetLabel()
+  inline EdgeLabel * GetLabel() const
   {
     return m_pLabel;
   }
@@ -646,10 +646,10 @@ public:
     }
     m_Vertices.clear();
 
-    forEach(typename std::vector<Edge<T> *>, &m_Edges)
+    for (auto& edge: m_Edges)
     {
-      delete *iter;
-      *iter = nullptr;
+      delete edge;
+      edge = nullptr;
     }
     m_Edges.clear();
   }
@@ -1355,11 +1355,6 @@ public:
 
 public:
   /**
-   * Parallelize scan matching
-   */
-  void operator()(const kt_double & y) const;
-
-  /**
    * Create a scan matcher with the given parameters
    */
   static ScanMatcher * Create(
@@ -1367,11 +1362,13 @@ public:
     kt_double searchSize,
     kt_double resolution,
     kt_double smearDeviation,
-    kt_double rangeThreshold);
+    kt_double rangeThreshold,
+    kt_double degeneracyThreshold = 1.0,
+    kt_double degeneracyPenalty = 1.0);
 
   /**
    * Match given scan against set of scans
-   * @param pScan scan being scan-matched
+   * @param pScan scan to match against correlation grid
    * @param rBaseScans set of scans whose points will mark cells in grid as being occupied
    * @param rMean output parameter of mean (best pose) of match
    * @param rCovariance output parameter of covariance of match
@@ -1385,7 +1382,8 @@ public:
     const T & rBaseScans,
     Pose2 & rMean, Matrix3 & rCovariance,
     kt_bool doPenalize = true,
-    kt_bool doRefineMatch = true);
+    kt_bool doRefineMatch = true,
+    kt_bool doDegeneracyCheck = false);
 
   /**
    * Finds the best pose for the scan centering the search in the correlation grid
@@ -1461,6 +1459,8 @@ public:
   }
 
 private:
+  void match(const kt_double & y) const;
+
   /**
    * Marks cells where scans' points hit as being occupied
    * @param rScans scans whose points will mark cells in grid as being occupied
@@ -1524,6 +1524,8 @@ private:
   kt_int32u m_nAngles;
   kt_double m_searchAngleResolution;
   kt_bool m_doPenalize;
+  kt_double m_degeneracyThreshold;
+  kt_double m_degeneracyPenalty;
 
   /**
    * Serialization: class ScanMatcher
@@ -1938,7 +1940,12 @@ private:
  *     Default value is 10.
  *
  *  \a LoopMatchMaximumVarianceCoarse (ParameterDouble)\n
- *     The co-variance values for a possible loop closure have to be less than this value
+ *     The primary co-variance value for a possible loop closure has to be less than this value
+ *     to consider a viable solution. This applies to the coarse search.
+ *     Default value is 0.16.
+ *
+ *  \a LoopMatchMaximumSecondaryVarianceCoarse (ParameterDouble)\n
+ *     The secondary co-variance value for a possible loop closure has to be less than this value
  *     to consider a viable solution. This applies to the coarse search.
  *     Default value is 0.16.
  *
@@ -2307,11 +2314,18 @@ protected:
   Parameter<kt_int32u> * m_pLoopMatchMinimumChainSize;
 
   /**
-   * The co-variance values for a possible loop closure have to be less than this value
+   * The primary co-variance value for a possible loop closure has to be less than this value
    * to consider a viable solution. This applies to the coarse search.
    * Default value is 0.16.
    */
   Parameter<kt_double> * m_pLoopMatchMaximumVarianceCoarse;
+
+  /**
+   * The secondary variance value for a possible loop closure has to be less than this value
+   * to consider a viable solution. This applies to the coarse search.
+   * Default value is 0.16.
+   */
+  Parameter<kt_double> * m_pLoopMatchMaximumSecondaryVarianceCoarse;
 
   /**
    * If response is larger then this, then initiate loop closure search at the coarse resolution.
@@ -2324,6 +2338,21 @@ protected:
    * Default value is 0.7.
    */
   Parameter<kt_double> * m_pLoopMatchMinimumResponseFine;
+
+  /**
+   * Threshold for match degeneracy metric [0, 1].  The degeneracy metric measures how much a loop closure match
+   * is constrained by only a single axis, such as in a featureless hallway.  Values closer to 1 are more degenerate.
+   * If the threshold is set to 1, then the metric is not calculated.
+   * Default value is 1.0.
+   */
+  Parameter<kt_double> * m_pMatchDegeneracyThreshold;
+
+  /**
+   * Covariance penalty to apply in the degenerate axis of a loop closure match that is larger than the match
+   * degeneracy threshold.
+   * Default value 10.0.
+   */
+  Parameter<kt_double> * m_pMatchDegeneracyPenalty;
 
   //////////////////////////////////////////////////////////////////////////////
   //    CorrelationParameters correlationParameters;
@@ -2420,8 +2449,11 @@ protected:
     ar & BOOST_SERIALIZATION_NVP(m_pLoopSearchMaximumDistance);
     ar & BOOST_SERIALIZATION_NVP(m_pLoopMatchMinimumChainSize);
     ar & BOOST_SERIALIZATION_NVP(m_pLoopMatchMaximumVarianceCoarse);
+    ar & BOOST_SERIALIZATION_NVP(m_pLoopMatchMaximumSecondaryVarianceCoarse);
     ar & BOOST_SERIALIZATION_NVP(m_pLoopMatchMinimumResponseCoarse);
     ar & BOOST_SERIALIZATION_NVP(m_pLoopMatchMinimumResponseFine);
+    ar & BOOST_SERIALIZATION_NVP(m_pMatchDegeneracyThreshold);
+    ar & BOOST_SERIALIZATION_NVP(m_pMatchDegeneracyPenalty);
     ar & BOOST_SERIALIZATION_NVP(m_pCorrelationSearchSpaceDimension);
     ar & BOOST_SERIALIZATION_NVP(m_pCorrelationSearchSpaceResolution);
     ar & BOOST_SERIALIZATION_NVP(m_pCorrelationSearchSpaceSmearDeviation);
@@ -2457,8 +2489,11 @@ public:
   bool getParamDoLoopClosing();
   int getParamLoopMatchMinimumChainSize();
   double getParamLoopMatchMaximumVarianceCoarse();
+  double getParamLoopMatchMaximumSecondaryVarianceCoarse();
   double getParamLoopMatchMinimumResponseCoarse();
   double getParamLoopMatchMinimumResponseFine();
+  double getParamMatchDegeneracyThreshold();
+  double getParamMatchDegeneracyPenalty();
 
   // Correlation Parameters - Correlation Parameters
   double getParamCorrelationSearchSpaceDimension();
@@ -2495,8 +2530,11 @@ public:
   void setParamDoLoopClosing(bool b);
   void setParamLoopMatchMinimumChainSize(int i);
   void setParamLoopMatchMaximumVarianceCoarse(double d);
+  void setParamLoopMatchMaximumSecondaryVarianceCoarse(double d);
   void setParamLoopMatchMinimumResponseCoarse(double d);
   void setParamLoopMatchMinimumResponseFine(double d);
+  void setParamMatchDegeneracyThreshold(double d);
+  void setParamMatchDegeneracyPenalty(double d);
 
   // Correlation Parameters - Correlation Parameters
   void setParamCorrelationSearchSpaceDimension(double d);

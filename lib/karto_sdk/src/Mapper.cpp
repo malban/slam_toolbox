@@ -32,7 +32,9 @@
 #include <utility>
 #include <vector>
 
+#include "Eigen/Geometry"
 #include "karto_sdk/Mapper.h"
+#include "karto_sdk/scan_util.h"
 
 BOOST_CLASS_EXPORT(karto::MapperGraph);
 BOOST_CLASS_EXPORT(karto::Graph<karto::LocalizedRangeScan>);
@@ -438,9 +440,9 @@ LocalizedRangeScanVector MapperSensorManager::GetAllScans()
 {
   LocalizedRangeScanVector scans;
 
-  forEach(ScanManagerMap, &m_ScanManagers)
+  for (const auto& scan_manager: m_ScanManagers)
   {
-    LocalizedRangeScanMap& rScans = iter->second->GetScans();
+    LocalizedRangeScanMap& rScans = scan_manager.second->GetScans();
 
     LocalizedRangeScanMap::iterator it;
     for (it = rScans.begin(); it != rScans.end(); ++it)
@@ -459,10 +461,10 @@ void MapperSensorManager::Clear()
 {
   //    SensorManager::Clear();
 
-  forEach(ScanManagerMap, &m_ScanManagers)
+  for (auto& scan_manager: m_ScanManagers)
   {
-    delete iter->second;
-    iter->second = nullptr;
+    delete scan_manager.second;
+    scan_manager.second = nullptr;
   }
 
   m_ScanManagers.clear();
@@ -489,7 +491,8 @@ ScanMatcher::~ScanMatcher()
 }
 
 ScanMatcher* ScanMatcher::Create(Mapper* pMapper, kt_double searchSize, kt_double resolution,
-                                 kt_double smearDeviation, kt_double rangeThreshold)
+                                 kt_double smearDeviation, kt_double rangeThreshold, kt_double degeneracyThreshold,
+                                 kt_double degeneracyPenalty)
 {
   // invalid parameters
   if (resolution <= 0)
@@ -534,6 +537,8 @@ ScanMatcher* ScanMatcher::Create(Mapper* pMapper, kt_double searchSize, kt_doubl
   pScanMatcher->m_pCorrelationGrid  = pCorrelationGrid;
   pScanMatcher->m_pSearchSpaceProbs = pSearchSpaceProbs;
   pScanMatcher->m_pGridLookup       = new GridIndexLookup<kt_int8u>(pCorrelationGrid);
+  pScanMatcher->m_degeneracyThreshold = degeneracyThreshold;
+  pScanMatcher->m_degeneracyPenalty = degeneracyPenalty;
 
   return pScanMatcher;
 }
@@ -550,13 +555,14 @@ ScanMatcher* ScanMatcher::Create(Mapper* pMapper, kt_double searchSize, kt_doubl
  * @return strength of response
  */
 template <class T>
-kt_double ScanMatcher::MatchScan(LocalizedRangeScan* pScan, const T& rBaseScans, Pose2& rMean,
-                                 Matrix3& rCovariance, kt_bool doPenalize, kt_bool doRefineMatch)
+kt_double ScanMatcher::MatchScan(LocalizedRangeScan * pScan, const T& rBaseScans, Pose2& rMean,
+                                 Matrix3& rCovariance, kt_bool doPenalize, kt_bool doRefineMatch,
+                                 kt_bool doDegeneracyCheck)
 {
   ///////////////////////////////////////
   // set scan pose to be center of grid
 
-  // 1. get scan position
+  // 1. get corrected sensor position
   Pose2 scanPose = pScan->GetSensorPose();
 
   // scan has no readings; cannot do scan matching
@@ -656,10 +662,101 @@ kt_double ScanMatcher::MatchScan(LocalizedRangeScan* pScan, const T& rBaseScans,
 #endif
   assert(math::InRange(rMean.GetHeading(), -KT_PI, KT_PI));
 
+  if (doDegeneracyCheck && m_degeneracyThreshold < 1) {
+
+    // Check if the scan points corresponding to occupied grid cells represent
+    // a degenerate scenario where a single axis dominates the correlation
+    //
+    // This is a heuristic to increase the covariance along the degenerate
+    // axis without needing to use a large correlation window.
+    Transform transform(pScan->GetCorrectedPose(), pScan->GetSensorAt(rMean));
+
+    const auto& range_readings = pScan->GetRangeReadingsVector();
+    const auto& point_readings = pScan->GetPointReadings();
+    double range_threshold = pScan->GetLaserRangeFinder()->GetRangeThreshold();
+    double minimum_range = pScan->GetLaserRangeFinder()->GetMinimumRange();
+
+    // Calculate point normals of scan with a 20cm baseline.
+    auto point_normals = calculatePointNormals(*pScan, 0.2, true);
+
+    // TODO(malban): Consider caching the point normals of the scan since they
+    //               will be fixed.  Though, they would need to be adjusted
+    //               if the scan is rotated via a correction.
+
+    // Filter normals to only include valid points that correspond to occupied
+    // grid cells.
+    std::vector<Eigen::Vector2d> valid_normals;
+    valid_normals.reserve(point_normals.size());
+    for (size_t i = 0; i < range_readings.size(); i++)
+    {
+      if (!math::InRange(range_readings[i], minimum_range, range_threshold))
+      {
+        continue;
+      }
+
+      // Get the corrected point position in world space.
+      auto corrected_point = transform.TransformPoint(point_readings[i]);
+
+      // Check if point reading corresponds to an occupied grid cell.
+      auto gridPoint = m_pCorrelationGrid->WorldToGrid(corrected_point);
+
+      if (!math::IsUpTo(gridPoint.GetX(), m_pCorrelationGrid->GetROI().GetWidth()) ||
+          !math::IsUpTo(gridPoint.GetY(), m_pCorrelationGrid->GetROI().GetHeight()))
+      {
+        continue;
+      }
+
+      int gridIndex = m_pCorrelationGrid->GridIndex(gridPoint);
+      auto value = m_pCorrelationGrid->GetDataPointer()[gridIndex];
+      if (value > 0) {
+        valid_normals.push_back(point_normals[i]);
+      }
+    }
+
+    // TODO(malban): response seems it's close to a percentage of inliers vs. all points instead of vs. valid points
+    // TODO(malban): covariance seems too large in the minor axis in some cases, could be due to slight rotation if the
+    //               angle search is too coarse
+
+    // Calculate the principle components of the valid normal vectors.
+    // This will result in two orthogonal vectors with lengths scaled proportionally to their representation in the
+    // set of normal vectors.
+    auto normal_components = GetPrincipalComponents(valid_normals, false);
+
+    // Calculate the degeneracy of the normal components.
+    //
+    // degeneracy = 1.0 - |minor component| / |major component|
+    //
+    double degeneracy = std::max(0.0, 1.0 - std::min(1.0, normal_components[1].norm() / normal_components[0].norm()));
+
+    if (degeneracy > m_degeneracyThreshold)
+    {
+      // Rotate the normal component vectors into the corrected orientation.
+      auto rotation = Eigen::Rotation2D<double>(pScan->GetSensorAt(rMean).GetHeading() -
+                                                pScan->GetCorrectedPose().GetHeading()).toRotationMatrix();
+      normal_components[0] = rotation * normal_components[0];
+      normal_components[1] = rotation * normal_components[1];
+
+      // Scale the degenerate axis
+      Eigen::Vector2d degenerate_axis_scaled = normal_components[1].normalized() * m_degeneracyPenalty;
+
+      // Create degeneracy covariance matrix in world frame.
+      Eigen::Matrix2d degenerate_cov = degenerate_axis_scaled * degenerate_axis_scaled.transpose();
+
+      Matrix3 cov_mat;
+      cov_mat(0, 0) = degenerate_cov(0, 0);
+      cov_mat(0, 1) = degenerate_cov(0, 1);
+      cov_mat(1, 0) = degenerate_cov(1, 0);
+      cov_mat(1, 1) = degenerate_cov(1, 1);
+
+      // Add the degeneracy covariance to the correlation covariance.
+      rCovariance += cov_mat;
+    }
+  }
+
   return bestResponse;
 }
 
-void ScanMatcher::operator()(const kt_double& y) const
+void ScanMatcher::match(const kt_double& y) const
 {
   kt_int32u poseResponseCounter;
   kt_int32u x_pose;
@@ -798,7 +895,7 @@ kt_double ScanMatcher::CorrelateScan(LocalizedRangeScan* pScan, const Pose2& rSe
   // SCAN MATCHING HERE.
   for (const double y : m_yPoses)
   {
-    (*this)(y);
+    match(y);
   }
   // NOTE: NOT parallelizing scan matching b/c it didn't seem to improve CPU resources
   // tbb::parallel_for_each(m_yPoses, (*this));
@@ -1307,9 +1404,9 @@ public:
     std::vector<Vertex<T>*> validVertices = TraverseForVertices(pStartVertex, pVisitor);
 
     std::vector<T*> objects;
-    forEach(typename std::vector<Vertex<T>*>, &validVertices)
+    for (const auto& vertex: validVertices)
     {
-      objects.push_back((*iter)->GetObject());
+      objects.push_back(vertex->GetObject());
     }
 
     return objects;
@@ -1341,15 +1438,13 @@ public:
         validVertices.push_back(pNext);
 
         std::vector<Vertex<T>*> adjacentVertices = pNext->GetAdjacentVertices();
-        forEach(typename std::vector<Vertex<T>*>, &adjacentVertices)
+        for (const auto& adjacent: adjacentVertices)
         {
-          Vertex<T>* pAdjacent = *iter;
-
           // adjacent vertex has not yet been seen, add to queue for processing
-          if (seenVertices.find(pAdjacent) == seenVertices.end())
+          if (seenVertices.find(adjacent) == seenVertices.end())
           {
-            toVisit.push(pAdjacent);
-            seenVertices.insert(pAdjacent);
+            toVisit.push(adjacent);
+            seenVertices.insert(adjacent);
           }
         }
       }
@@ -1458,7 +1553,8 @@ MapperGraph::MapperGraph(Mapper* pMapper, kt_double rangeThreshold) : m_pMapper(
   m_pLoopScanMatcher =
     ScanMatcher::Create(pMapper, m_pMapper->m_pLoopSearchSpaceDimension->GetValue(),
                         m_pMapper->m_pLoopSearchSpaceResolution->GetValue(),
-                        m_pMapper->m_pLoopSearchSpaceSmearDeviation->GetValue(), rangeThreshold);
+                        m_pMapper->m_pLoopSearchSpaceSmearDeviation->GetValue(), rangeThreshold,
+                        m_pMapper->getParamMatchDegeneracyThreshold(), m_pMapper->getParamMatchDegeneracyPenalty());
   assert(m_pLoopScanMatcher);
 
   m_pTraversal = new BreadthFirstTraversal<LocalizedRangeScan>(this);
@@ -1524,13 +1620,11 @@ void MapperGraph::AddEdges(LocalizedRangeScan* pScan, const Matrix3& rCovariance
     assert(pSensorManager->GetScans(rSensorName).size() == 1);
 
     std::vector<Name> deviceNames = pSensorManager->GetSensorNames();
-    forEach(std::vector<Name>, &deviceNames)
+    for (const auto& name: deviceNames)
     {
-      const Name& rCandidateSensorName = *iter;
-
       // skip if candidate device is the same or other device has no scans
-      if ((rCandidateSensorName == rSensorName) ||
-          (pSensorManager->GetScans(rCandidateSensorName).empty()))
+      if ((name == rSensorName) ||
+          (pSensorManager->GetScans(name).empty()))
       {
         continue;
       }
@@ -1538,8 +1632,8 @@ void MapperGraph::AddEdges(LocalizedRangeScan* pScan, const Matrix3& rCovariance
       Pose2 bestPose;
       Matrix3 covariance;
       kt_double response = m_pMapper->m_pSequentialScanMatcher->MatchScan<LocalizedRangeScanMap>(
-        pScan, pSensorManager->GetScans(rCandidateSensorName), bestPose, covariance);
-      LinkScans(pScan, pSensorManager->GetScan(rCandidateSensorName, 0), bestPose, covariance);
+        pScan, pSensorManager->GetScans(name), bestPose, covariance, true, true, true);
+      LinkScans(pScan, pSensorManager->GetScan(name, 0), bestPose, covariance);
 
       // only add to means and covariances if response was high "enough"
       if (response > m_pMapper->m_pLinkMatchMinimumResponseFine->GetValue())
@@ -1567,7 +1661,7 @@ void MapperGraph::AddEdges(LocalizedRangeScan* pScan, const Matrix3& rCovariance
   }
 }
 
-kt_bool MapperGraph::TryCloseLoop(LocalizedRangeScan* pScan, const Name& rSensorName)
+kt_bool MapperGraph::TryCloseLoop(LocalizedRangeScan * pScan, const Name& rSensorName)
 {
   kt_bool loopClosed = false;
 
@@ -1582,26 +1676,34 @@ kt_bool MapperGraph::TryCloseLoop(LocalizedRangeScan* pScan, const Name& rSensor
     kt_double coarseResponse =
       m_pLoopScanMatcher->MatchScan(pScan, candidateChain, bestPose, covariance, false, false);
 
+    // decompose the covariance matrix into it's principal components to find the primaray and secondary axes
+    auto components = GetPrincipalComponents(Eigen::Matrix2d{ {covariance(0, 0), covariance(0, 1)}, {covariance(1, 0), covariance(1, 1)} });
+    auto primary_axis = components[0];
+    auto secondary_axis = components[1];
+
     std::stringstream stream;
     stream << "COARSE RESPONSE: " << coarseResponse << " (> "
            << m_pMapper->m_pLoopMatchMinimumResponseCoarse->GetValue() << ")" << std::endl;
-    stream << "            var: " << covariance(0, 0) << ",  " << covariance(1, 1) << " (< "
-           << m_pMapper->m_pLoopMatchMaximumVarianceCoarse->GetValue() << ")";
+    stream << "            var: " << primary_axis.norm() << ",  " << secondary_axis.norm() << " (< "
+           << m_pMapper->m_pLoopMatchMaximumVarianceCoarse->GetValue() << ", "
+           << m_pMapper->m_pLoopMatchMaximumSecondaryVarianceCoarse->GetValue() << ")"<< std::endl;
 
     m_pMapper->FireLoopClosureCheck(stream.str());
 
     if ((coarseResponse > m_pMapper->m_pLoopMatchMinimumResponseCoarse->GetValue()) &&
-        (covariance(0, 0) < m_pMapper->m_pLoopMatchMaximumVarianceCoarse->GetValue()) &&
-        (covariance(1, 1) < m_pMapper->m_pLoopMatchMaximumVarianceCoarse->GetValue()))
+        (primary_axis.norm() <= m_pMapper->m_pLoopMatchMaximumVarianceCoarse->GetValue()) &&
+        (secondary_axis.norm() <= m_pMapper->m_pLoopMatchMaximumSecondaryVarianceCoarse->GetValue()))
     {
       LocalizedRangeScan tmpScan(pScan->GetSensorName(), pScan->GetRangeReadingsVector());
       tmpScan.SetUniqueId(pScan->GetUniqueId());
       tmpScan.SetTime(pScan->GetTime());
       tmpScan.SetStateId(pScan->GetStateId());
       tmpScan.SetCorrectedPose(pScan->GetCorrectedPose());
-      tmpScan.SetSensorPose(bestPose); // This also updates OdometricPose.
+      tmpScan.SetSensorPose(bestPose);
+
+
       kt_double fineResponse = m_pMapper->m_pSequentialScanMatcher->MatchScan(
-        &tmpScan, candidateChain, bestPose, covariance, false);
+        &tmpScan, candidateChain, bestPose, covariance, false, true, true);
 
       std::stringstream stream1;
       stream1 << "FINE RESPONSE: " << fineResponse << " (>"
@@ -1786,7 +1888,7 @@ void MapperGraph::LinkNearChains(LocalizedRangeScan* pScan, Pose2Vector& rMeans,
     Matrix3 covariance;
     // match scan against "near" chain
     kt_double response =
-      m_pMapper->m_pSequentialScanMatcher->MatchScan(pScan, *iter, mean, covariance, false);
+      m_pMapper->m_pSequentialScanMatcher->MatchScan(pScan, *iter, mean, covariance, false, true, true);
     if (response > m_pMapper->m_pLinkMatchMinimumResponseFine->GetValue() - KT_TOLERANCE)
     {
       rMeans.push_back(mean);
@@ -2219,7 +2321,8 @@ void MapperGraph::UpdateLoopScanMatcher(kt_double rangeThreshold)
   m_pLoopScanMatcher =
     ScanMatcher::Create(m_pMapper, m_pMapper->m_pLoopSearchSpaceDimension->GetValue(),
                         m_pMapper->m_pLoopSearchSpaceResolution->GetValue(),
-                        m_pMapper->m_pLoopSearchSpaceSmearDeviation->GetValue(), rangeThreshold);
+                        m_pMapper->m_pLoopSearchSpaceSmearDeviation->GetValue(), rangeThreshold,
+                        m_pMapper->getParamMatchDegeneracyThreshold(), m_pMapper->getParamMatchDegeneracyPenalty());
   assert(m_pLoopScanMatcher);
 }
 
@@ -2355,7 +2458,14 @@ void Mapper::InitializeParameters()
 
   m_pLoopMatchMaximumVarianceCoarse =
     new Parameter<kt_double>("LoopMatchMaximumVarianceCoarse",
-                             "The co-variance values for a possible loop closure have to be less "
+                             "The primary co-variance values for a possible loop closure has to be less "
+                             "than this value to consider a viable solution. This applies to the "
+                             "coarse search.",
+                             math::Square(0.4), GetParameterManager());
+
+  m_pLoopMatchMaximumSecondaryVarianceCoarse =
+    new Parameter<kt_double>("LoopMatchMaximumSecondaryVarianceCoarse",
+                             "The secondary co-variance value for a possible loop closure has to be less "
                              "than this value to consider a viable solution. This applies to the "
                              "coarse search.",
                              math::Square(0.4), GetParameterManager());
@@ -2371,6 +2481,19 @@ void Mapper::InitializeParameters()
     "If response is larger then this, then initiate loop closure search at "
     "the fine resolution.",
     0.8, GetParameterManager());
+
+  m_pMatchDegeneracyThreshold = new Parameter<kt_double>(
+    "MatchDegenercyThreshold",
+    "Threshold for match degeneracy metric [0, 1].  The degeneracy metric measures how much a loop closure match "
+    "is constrained by only a single axis, such as in a featureless hallway.  Values closer to 1 are more degenerate. "
+    "If the threshold is set to 1, then the metric is not calculated.",
+    1.0, GetParameterManager());
+
+  m_pMatchDegeneracyPenalty = new Parameter<kt_double>(
+    "MatchDegenercyPenalty",
+    "Covariance penalty to apply in the degenerate axis of a loop closure match that is larger than the match "
+    "degeneracy threshold.",
+    10.0, GetParameterManager());
 
   //////////////////////////////////////////////////////////////////////////////
   //    CorrelationParameters correlationParameters;
@@ -2522,6 +2645,12 @@ double Mapper::getParamLoopMatchMaximumVarianceCoarse()
   return static_cast<double>(std::sqrt(m_pLoopMatchMaximumVarianceCoarse->GetValue()));
 }
 
+double Mapper::getParamLoopMatchMaximumSecondaryVarianceCoarse()
+{
+  return static_cast<double>(std::sqrt(m_pLoopMatchMaximumSecondaryVarianceCoarse->GetValue()));
+}
+
+
 double Mapper::getParamLoopMatchMinimumResponseCoarse()
 {
   return static_cast<double>(m_pLoopMatchMinimumResponseCoarse->GetValue());
@@ -2530,6 +2659,16 @@ double Mapper::getParamLoopMatchMinimumResponseCoarse()
 double Mapper::getParamLoopMatchMinimumResponseFine()
 {
   return static_cast<double>(m_pLoopMatchMinimumResponseFine->GetValue());
+}
+
+double Mapper::getParamMatchDegeneracyThreshold()
+{
+  return static_cast<double>(m_pMatchDegeneracyThreshold->GetValue());
+}
+
+double Mapper::getParamMatchDegeneracyPenalty()
+{
+  return static_cast<double>(m_pMatchDegeneracyPenalty->GetValue());
 }
 
 // Correlation Parameters - Correlation Parameters
@@ -2675,6 +2814,11 @@ void Mapper::setParamLoopMatchMaximumVarianceCoarse(double d)
   m_pLoopMatchMaximumVarianceCoarse->SetValue((kt_double)math::Square(d));
 }
 
+void Mapper::setParamLoopMatchMaximumSecondaryVarianceCoarse(double d)
+{
+  m_pLoopMatchMaximumSecondaryVarianceCoarse->SetValue((kt_double)math::Square(d));
+}
+
 void Mapper::setParamLoopMatchMinimumResponseCoarse(double d)
 {
   m_pLoopMatchMinimumResponseCoarse->SetValue((kt_double)d);
@@ -2683,6 +2827,16 @@ void Mapper::setParamLoopMatchMinimumResponseCoarse(double d)
 void Mapper::setParamLoopMatchMinimumResponseFine(double d)
 {
   m_pLoopMatchMinimumResponseFine->SetValue((kt_double)d);
+}
+
+void Mapper::setParamMatchDegeneracyThreshold(double d)
+{
+  m_pMatchDegeneracyThreshold->SetValue((kt_double)d);
+}
+
+void Mapper::setParamMatchDegeneracyPenalty(double d)
+{
+  m_pMatchDegeneracyPenalty->SetValue((kt_double)d);
 }
 
 // Correlation Parameters - Correlation Parameters
@@ -2773,7 +2927,8 @@ void Mapper::Initialize(kt_double rangeThreshold)
   m_pSequentialScanMatcher =
     ScanMatcher::Create(this, m_pCorrelationSearchSpaceDimension->GetValue(),
                         m_pCorrelationSearchSpaceResolution->GetValue(),
-                        m_pCorrelationSearchSpaceSmearDeviation->GetValue(), rangeThreshold);
+                        m_pCorrelationSearchSpaceSmearDeviation->GetValue(), rangeThreshold,
+                        getParamMatchDegeneracyThreshold(), getParamMatchDegeneracyPenalty());
   assert(m_pSequentialScanMatcher);
 
   if (m_Deserialized)

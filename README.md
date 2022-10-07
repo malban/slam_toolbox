@@ -298,6 +298,10 @@ The following settings and options are exposed to you. My default configuration 
 
 `loop_search_space_smear_deviation` - Amount of multimodal smearing to smooth out responses
 
+`match_degeneracy_threshold` - Threshold for match degeneracy metric [0.0, 1.0].  The degeneracy metric measures how much a non-sequential match is constrained by only a single axis, such as in a featureless hallway.  Values closer to 1 are more degenerate.  If the threshold is set to 1, then the metric is not calculated.  Default: 1.0
+
+`match_degeneracy_penalty` - Covariance penalty to apply in the degenerate axis of a non-sequential match that is larger than the match degeneracy threshold.  Default: 10.0
+
 `distance_variance_penalty` - A penalty to apply to a matched scan as it differs from the odometric pose
 
 `angle_variance_penalty` - A penalty to apply to a matched scan as it differs from the odometric pose

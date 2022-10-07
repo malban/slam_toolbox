@@ -2665,6 +2665,21 @@ public:
   }
 
   /**
+   * Matrix3 and Vector2 multiplication - matrix * pose [3x3 * 3x1 = 3x1]
+   * @param rPose2
+   * @return Pose2 product
+   */
+  inline Vector2<kt_double> operator*(const Vector2<kt_double> & rVector2) const
+  {
+    Vector2<kt_double> vector2;
+
+    vector2.SetX(m_Matrix[0][0] * rVector2.GetX() + m_Matrix[0][1] * rVector2.GetY());
+    vector2.SetY(m_Matrix[1][0] * rVector2.GetX() + m_Matrix[1][1] * rVector2.GetY());
+
+    return vector2;
+  }
+
+  /**
    * In place Matrix3 add.
    * @param rkMatrix
    */
@@ -2976,6 +2991,11 @@ public:
     kt_double angle = math::NormalizeAngle(rSourcePose.GetHeading() + m_Transform.GetHeading());
 
     return Pose2(newPosition.GetPosition(), angle);
+  }
+
+  inline Vector2<kt_double> TransformPoint(const Vector2<kt_double> & point)
+  {
+    return m_Transform.GetPosition() + m_Rotation * point;
   }
 
   /**
@@ -3756,9 +3776,9 @@ public:
   {
     SensorVector sensors;
 
-    forEach(SensorManagerMap, &m_Sensors)
+    for(const auto& sensor: m_Sensors)
     {
-      sensors.push_back(iter->second);
+      sensors.push_back(sensor.second);
     }
 
     return sensors;
@@ -5539,7 +5559,7 @@ public:
     return GetSensorAt(m_CorrectedPose);
   }
 
-  inline void SetIsDirty(kt_bool & rIsDirty)
+  inline void SetIsDirty(kt_bool rIsDirty)
   {
     m_IsDirty = rIsDirty;
   }
@@ -5665,29 +5685,18 @@ private:
 
       // compute point readings
       Vector2<kt_double> rangePointsSum;
-      kt_int32u beamNum = 0;
-      for (kt_int32u i = 0; i < pLaserRangeFinder->GetNumberOfRangeReadings(); i++, beamNum++) {
+      for (kt_int32u i = 0; i < GetNumberOfRangeReadings(); i++) {
         kt_double rangeReading = GetRangeReadings()[i];
-        if (!math::InRange(rangeReading, pLaserRangeFinder->GetMinimumRange(), rangeThreshold)) {
-          kt_double angle = scanPose.GetHeading() + minimumAngle + beamNum * angularResolution;
-
-          Vector2<kt_double> point;
-          point.SetX(scanPose.GetX() + (rangeReading * cos(angle)));
-          point.SetY(scanPose.GetY() + (rangeReading * sin(angle)));
-
-          m_UnfilteredPointReadings.push_back(point);
-          continue;
-        }
-
-        kt_double angle = scanPose.GetHeading() + minimumAngle + beamNum * angularResolution;
-
+        kt_double angle = scanPose.GetHeading() + minimumAngle + i * angularResolution;
         Vector2<kt_double> point;
         point.SetX(scanPose.GetX() + (rangeReading * cos(angle)));
         point.SetY(scanPose.GetY() + (rangeReading * sin(angle)));
+        m_UnfilteredPointReadings.push_back(point);
+        if (!math::InRange(rangeReading, pLaserRangeFinder->GetMinimumRange(), rangeThreshold)) {
+          continue;
+        }
 
         m_PointReadings.push_back(point);
-        m_UnfilteredPointReadings.push_back(point);
-
         rangePointsSum += point;
       }
 
@@ -5703,9 +5712,9 @@ private:
       // calculate bounding box of scan
       m_BoundingBox = BoundingBox2();
       m_BoundingBox.Add(scanPose.GetPosition());
-      forEach(PointVectorDouble, &m_PointReadings)
+      for (const auto& point: m_PointReadings)
       {
-        m_BoundingBox.Add(*iter);
+        m_BoundingBox.Add(point);
       }
     }
 
@@ -5867,9 +5876,9 @@ private:
     // calculate bounding box of scan
     m_BoundingBox = BoundingBox2();
     m_BoundingBox.Add(scanPose.GetPosition());
-    forEach(PointVectorDouble, &m_PointReadings)
+    for (const auto& point: m_PointReadings)
     {
-      m_BoundingBox.Add(*iter);
+      m_BoundingBox.Add(point);
     }
 
     m_IsDirty = false;
@@ -6563,11 +6572,11 @@ public:
       karto::SensorManager::GetInstance()->UnregisterSensor(iter->second);
     }
 
-    forEach(ObjectVector, &m_Lasers)
+    for (auto& laser: m_Lasers)
     {
-      if (*iter) {
-        delete *iter;
-        *iter = NULL;
+      if (laser) {
+        delete laser;
+        laser = NULL;
       }
     }
 
@@ -6881,12 +6890,12 @@ private:
 
     kt_int32s * pAngleIndexPointer = m_ppLookupArray[angleIndex]->GetArrayPointer();
 
-    kt_double maxRange = pScan->GetLaserRangeFinder()->GetMaximumRange();
-
     const_forEach(Pose2Vector, &rLocalPoints)
     {
       const Vector2<kt_double> & rPosition = iter->GetPosition();
 
+      // TODO(malban): wouldn't this potentially include scans that are too close or too far?
+      //               what about min and max sensor range?
       if (std::isnan(pScan->GetRangeReadings()[readingIndex]) ||
         std::isinf(pScan->GetRangeReadings()[readingIndex]))
       {
@@ -6894,7 +6903,6 @@ private:
         readingIndex++;
         continue;
       }
-
 
       // counterclockwise rotation and that rotation is about the origin (0, 0).
       Vector2<kt_double> offset;
