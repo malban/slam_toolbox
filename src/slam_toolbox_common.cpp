@@ -196,7 +196,7 @@ void SlamToolbox::setROSInterfaces()
   auto timer_interface = std::make_shared<tf2_ros::CreateTimerROS>(get_node_base_interface(),
                                                                    get_node_timers_interface());
   tf_->setCreateTimerInterface(timer_interface);
-  tfL_ = std::make_unique<tf2_ros::TransformListener>(*tf_);
+  tfL_ = std::make_unique<tf2_ros::TransformListener>(*tf_, this, true);
   tfB_ = std::make_unique<tf2_ros::TransformBroadcaster>(shared_from_this());
 
   pose_pub_   = this->create_publisher<geometry_msgs::msg::PoseWithCovarianceStamped>("pose", 10);
