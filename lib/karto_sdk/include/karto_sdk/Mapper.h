@@ -185,13 +185,18 @@ public:
     rotationMatrix.FromAxisAngle(0, 0, 1, -rPose1.GetHeading());
 
     m_Covariance = rotationMatrix * rCovariance * rotationMatrix.Transpose();
+
+    auto components = GetPrincipalComponents(Eigen::Matrix2d{
+      {m_Covariance(0, 0), m_Covariance(0, 1)}, {m_Covariance(1, 0), m_Covariance(1, 1)} });
+    m_PrincipalCovariance = components[0].norm();
+    m_SecondaryCovariance = components[1].norm();
   }
 
   /**
    * Gets the first pose
    * @return first pose
    */
-  inline const Pose2 & GetPose1()
+  inline const Pose2 & GetPose1() const
   {
     return m_Pose1;
   }
@@ -200,7 +205,7 @@ public:
    * Gets the second pose
    * @return second pose
    */
-  inline const Pose2 & GetPose2()
+  inline const Pose2 & GetPose2() const
   {
     return m_Pose2;
   }
@@ -209,7 +214,7 @@ public:
    * Gets the pose difference
    * @return pose difference
    */
-  inline const Pose2 & GetPoseDifference()
+  inline const Pose2 & GetPoseDifference() const
   {
     return m_PoseDifference;
   }
@@ -218,9 +223,19 @@ public:
    * Gets the link covariance
    * @return link covariance
    */
-  inline const Matrix3 & GetCovariance()
+  inline const Matrix3 & GetCovariance() const
   {
     return m_Covariance;
+  }
+
+  inline kt_double GetPrincipalCovariance() const
+  {
+    return m_PrincipalCovariance;
+  }
+
+  inline kt_double GetSecondaryCovariance() const
+  {
+    return m_SecondaryCovariance;
   }
 
 private:
@@ -228,6 +243,8 @@ private:
   Pose2 m_Pose2;
   Pose2 m_PoseDifference;
   Matrix3 m_Covariance;
+  kt_double m_PrincipalCovariance;
+  kt_double m_SecondaryCovariance;
 
   friend class boost::serialization::access;
   template<class Archive>
@@ -237,7 +254,8 @@ private:
     ar & BOOST_SERIALIZATION_NVP(m_Pose1);
     ar & BOOST_SERIALIZATION_NVP(m_Pose2);
     ar & BOOST_SERIALIZATION_NVP(m_PoseDifference);
-    ar & BOOST_SERIALIZATION_NVP(m_Covariance);
+    ar & BOOST_SERIALIZATION_NVP(m_PrincipalCovariance);
+    ar & BOOST_SERIALIZATION_NVP(m_SecondaryCovariance);
   }
 };    // LinkInfo
 
@@ -486,7 +504,7 @@ private:
 ////////////////////////////////////////////////////////////////////////////////////////
 
 /**
- * Visitor class
+ * Vertex visitor class
  */
 template<typename T>
 class Visitor
@@ -505,6 +523,28 @@ public:
   }
 };    // Visitor<T>
 BOOST_SERIALIZATION_ASSUME_ABSTRACT(Visitor<LocalizedRangeScan>)
+
+/**
+ * Edge visitor class
+ */
+template<typename T>
+class EdgeVisitor
+{
+public:
+  /**
+   * Applies the visitor to the edge
+   * @param pEdge
+   * @return true if the visitor accepted the edge, false otherwise
+   */
+  virtual kt_bool Visit(Edge<T> * pEdge) = 0;
+  friend class boost::serialization::access;
+  template<class Archive>
+  void serialize(Archive & ar, const unsigned int version)
+  {
+  }
+};    // EdgeVisitor<T>
+BOOST_SERIALIZATION_ASSUME_ABSTRACT(EdgeVisitor<LocalizedRangeScan>)
+
 ////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////
@@ -533,10 +573,11 @@ public:
   }
 
 public:
-  virtual std::vector<T *> TraverseForScans(Vertex<T> * pStartVertex, Visitor<T> * pVisitor) = 0;
+  virtual std::vector<T *> TraverseForScans(Vertex<T> * pStartVertex, Visitor<T> * pVisitor, EdgeVisitor<T> * pEdgeVisitor) = 0;
   virtual std::vector<Vertex<T> *> TraverseForVertices(
     Vertex<T> * pStartVertex,
-    Visitor<T> * pVisitor) = 0;
+    Visitor<T> * pVisitor,
+    EdgeVisitor<T> * edgeVisitor) = 0;
 
 protected:
   Graph<T> * m_pGraph;
@@ -766,24 +807,28 @@ public:
    * Find "nearby" (no further than given distance away) scans through graph links
    * @param pScan
    * @param maxDistance
+   * @param maxCovariance
    */
-  LocalizedRangeScanVector FindNearLinkedScans(LocalizedRangeScan * pScan, kt_double maxDistance);
+  LocalizedRangeScanVector FindNearLinkedScans(LocalizedRangeScan * pScan, kt_double maxDistance, kt_double maxCovariance);
 
   /**
    * Find "nearby" (no further than given distance away) vertices through graph links
    * @param pScan
    * @param maxDistance
+   * @param maxCovariance
    */
   std::vector<Vertex<LocalizedRangeScan> *> FindNearLinkedVertices(
     LocalizedRangeScan * pScan,
-    kt_double maxDistance);
+    kt_double maxDistance,
+    kt_double maxCovariance);
 
   /**
    * Find "nearby" (no further than given distance away) scans through graph links
    * @param pScan
    * @param maxDistance
+   * @param maxCovariance
    */
-  LocalizedRangeScanVector FindNearByScans(Name name, const Pose2 refPose, kt_double maxDistance);
+  LocalizedRangeScanVector FindNearByScans(Name name, const Pose2 refPose, kt_double maxDistance, kt_double maxCovariance);
 
   /**
    * Find "nearby" (no further than given distance away) vertices through KD-tree
@@ -1933,6 +1978,11 @@ private:
  *     in loop closure.
  *     Default value is 4.0 meters.
  *
+ *  \a LoopSearchMinimumSpacing (ParameterDouble - meters)\n
+ *     Minimum distance between a loop closure candidates and an existing recent
+ *     loop closure to the same chain.
+ *     Default value is 1.5 meters.
+ *
  *  \a LoopMatchMinimumChainSize (ParameterIn32s)\n
  *     When the loop closure detection finds a candidate it must be part of a large
  *     set of linked scans. If the chain of scans is less than this value we do not attempt
@@ -2293,6 +2343,12 @@ protected:
   Parameter<kt_double> * m_pLinkScanMaximumDistance;
 
   /**
+   * Maximum covariance for links to be considered as part of a nearby chain.
+   * Default value is 1 meter.
+   */
+  Parameter<kt_double> * m_pMaximumNearLinkCovariance;
+
+  /**
    * Enable/disable loop closure.
    * Default is enabled.
    */
@@ -2304,6 +2360,13 @@ protected:
    * Default value is 4.0 meters.
    */
   Parameter<kt_double> * m_pLoopSearchMaximumDistance;
+
+  /**
+   * Minimum distance between a loop closure candidates and an existing recent
+   * loop closure to the same chain.
+   * Default value is 1.5 meters.
+   */
+  Parameter<kt_double> * m_pLoopSearchMinimumSpacing;
 
   /**
    * When the loop closure detection finds a candidate it must be part of a large
@@ -2445,8 +2508,10 @@ protected:
     ar & BOOST_SERIALIZATION_NVP(m_pScanBufferMaximumScanDistance);
     ar & BOOST_SERIALIZATION_NVP(m_pLinkMatchMinimumResponseFine);
     ar & BOOST_SERIALIZATION_NVP(m_pLinkScanMaximumDistance);
+    ar & BOOST_SERIALIZATION_NVP(m_pMaximumNearLinkCovariance);
     ar & BOOST_SERIALIZATION_NVP(m_pDoLoopClosing);
     ar & BOOST_SERIALIZATION_NVP(m_pLoopSearchMaximumDistance);
+    ar & BOOST_SERIALIZATION_NVP(m_pLoopSearchMinimumSpacing);
     ar & BOOST_SERIALIZATION_NVP(m_pLoopMatchMinimumChainSize);
     ar & BOOST_SERIALIZATION_NVP(m_pLoopMatchMaximumVarianceCoarse);
     ar & BOOST_SERIALIZATION_NVP(m_pLoopMatchMaximumSecondaryVarianceCoarse);
@@ -2486,6 +2551,8 @@ public:
   double getParamLinkMatchMinimumResponseFine();
   double getParamLinkScanMaximumDistance();
   double getParamLoopSearchMaximumDistance();
+  double getParamLoopSearchMinimumSpacing();
+  double getParamMaximumNearLinkCovariance();
   bool getParamDoLoopClosing();
   int getParamLoopMatchMinimumChainSize();
   double getParamLoopMatchMaximumVarianceCoarse();
@@ -2526,7 +2593,9 @@ public:
   void setParamScanBufferMaximumScanDistance(double d);
   void setParamLinkMatchMinimumResponseFine(double d);
   void setParamLinkScanMaximumDistance(double d);
+  void setParamMaximumNearLinkCovariance(double d);
   void setParamLoopSearchMaximumDistance(double d);
+  void setParamLoopSearchMinimumSpacing(double d);
   void setParamDoLoopClosing(bool b);
   void setParamLoopMatchMinimumChainSize(int i);
   void setParamLoopMatchMaximumVarianceCoarse(double d);

@@ -160,7 +160,7 @@ Vertices LifelongSlamToolbox::FindScansWithinRadius(
       scan->GetSensorName(), scan->GetBarycenterPose(), radius);
   } else {
     return
-      smapper_->getMapper()->GetGraph()->FindNearLinkedVertices(scan, radius);
+      smapper_->getMapper()->GetGraph()->FindNearLinkedVertices(scan, radius, std::numeric_limits<double>::max());
   }
 }
 

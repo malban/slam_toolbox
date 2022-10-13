@@ -160,6 +160,20 @@ void SMapper::configure(const rclcpp::Node::SharedPtr & node)
   node->get_parameter("loop_search_maximum_distance", loop_search_maximum_distance);
   mapper_->setParamLoopSearchMaximumDistance(loop_search_maximum_distance);
 
+  double loop_search_minimum_spacing = 1.5;
+  if (!node->has_parameter("loop_search_minimum_spacing")) {
+    node->declare_parameter("loop_search_minimum_spacing", loop_search_minimum_spacing);
+  }
+  node->get_parameter("loop_search_minimum_spacing", loop_search_minimum_spacing);
+  mapper_->setParamLoopSearchMinimumSpacing(loop_search_minimum_spacing);
+
+  double maximum_near_link_covariance = 1.0;
+  if (!node->has_parameter("maximum_near_link_covariance")) {
+    node->declare_parameter("maximum_near_link_covariance", maximum_near_link_covariance);
+  }
+  node->get_parameter("maximum_near_link_covariance", maximum_near_link_covariance);
+  mapper_->setParamMaximumNearLinkCovariance(maximum_near_link_covariance);
+
   bool do_loop_closing = true;
   if (!node->has_parameter("do_loop_closing")) {
     node->declare_parameter("do_loop_closing", do_loop_closing);

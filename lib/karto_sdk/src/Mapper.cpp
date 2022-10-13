@@ -1399,9 +1399,9 @@ public:
    * @param pVisitor
    * @return visited vertice scans
    */
-  virtual std::vector<T*> TraverseForScans(Vertex<T>* pStartVertex, Visitor<T>* pVisitor)
+  virtual std::vector<T*> TraverseForScans(Vertex<T>* pStartVertex, Visitor<T>* pVisitor, EdgeVisitor<T> * pEdgeVisitor = nullptr)
   {
-    std::vector<Vertex<T>*> validVertices = TraverseForVertices(pStartVertex, pVisitor);
+    std::vector<Vertex<T>*> validVertices = TraverseForVertices(pStartVertex, pVisitor, pEdgeVisitor);
 
     std::vector<T*> objects;
     for (const auto& vertex: validVertices)
@@ -1418,7 +1418,7 @@ public:
    * @param pVisitor
    * @return visited vertices
    */
-  virtual std::vector<Vertex<T>*> TraverseForVertices(Vertex<T>* pStartVertex, Visitor<T>* pVisitor)
+  virtual std::vector<Vertex<T>*> TraverseForVertices(Vertex<T>* pStartVertex, Visitor<T>* pVisitor, EdgeVisitor<T> * pEdgeVisitor = nullptr)
   {
     std::queue<Vertex<T>*> toVisit;
     std::set<Vertex<T>*> seenVertices;
@@ -1432,22 +1432,35 @@ public:
       Vertex<T>* pNext = toVisit.front();
       toVisit.pop();
 
-      if (pNext != NULL && pVisitor->Visit(pNext))
+      if (!pNext || !pVisitor->Visit(pNext))
       {
-        // vertex is valid, explore neighbors
-        validVertices.push_back(pNext);
+        continue;
+      }
+      validVertices.push_back(pNext);
 
-        std::vector<Vertex<T>*> adjacentVertices = pNext->GetAdjacentVertices();
-        for (const auto& adjacent: adjacentVertices)
+      // visit adjacent vertices along valid edges
+      const auto& edges = pNext->GetEdges();
+      for (const auto& edge: edges)
+      {
+        if (!pEdgeVisitor || !pEdgeVisitor->Visit(edge))
         {
-          // adjacent vertex has not yet been seen, add to queue for processing
-          if (seenVertices.find(adjacent) == seenVertices.end())
-          {
-            toVisit.push(adjacent);
-            seenVertices.insert(adjacent);
-          }
+          continue;
+        }
+
+        // check both source and target because we have a undirected graph
+        if (edge->GetSource() != pNext && seenVertices.find(edge->GetSource()) == seenVertices.end())
+        {
+          toVisit.push(edge->GetSource());
+          seenVertices.insert(edge->GetSource());
+        }
+
+        if (edge->GetTarget() != pNext && seenVertices.find(edge->GetTarget()) == seenVertices.end())
+        {
+          toVisit.push(edge->GetTarget());
+          seenVertices.insert(edge->GetTarget());
         }
       }
+
     } while (toVisit.empty() == false);
 
     return validVertices;
@@ -1505,6 +1518,36 @@ protected:
     ar& BOOST_SERIALIZATION_NVP(m_UseScanBarycenter);
   }
 }; // NearScanVisitor
+
+class EdgeCovarianceVisitor : public EdgeVisitor<LocalizedRangeScan>
+{
+public:
+  EdgeCovarianceVisitor(kt_double maxCovariance)
+    : m_MaxCovariance(maxCovariance)
+  {
+  }
+
+  virtual kt_bool Visit(Edge<LocalizedRangeScan>* pEdge)
+  {
+    if (!pEdge) {
+      return false;
+    }
+
+    auto principal_cov = ((karto::LinkInfo *)(pEdge->GetLabel()))->GetPrincipalCovariance();
+    return principal_cov <= m_MaxCovariance;
+  }
+
+protected:
+  kt_double m_MaxCovariance;
+  friend class boost::serialization::access;
+  template <class Archive>
+  void serialize(Archive& ar, const unsigned int version)
+  {
+    ar& BOOST_SERIALIZATION_BASE_OBJECT_NVP(EdgeVisitor<LocalizedRangeScan>);
+    ar& BOOST_SERIALIZATION_NVP(m_MaxCovariance);
+  }
+}; // EdgeCovarianceVisitor
+
 
 ////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////
@@ -1927,7 +1970,7 @@ std::vector<LocalizedRangeScanVector> MapperGraph::FindNearChains(LocalizedRange
   LocalizedRangeScanVector processed;
 
   const LocalizedRangeScanVector nearLinkedScans =
-    FindNearLinkedScans(pScan, m_pMapper->m_pLinkScanMaximumDistance->GetValue());
+    FindNearLinkedScans(pScan, m_pMapper->m_pLinkScanMaximumDistance->GetValue(), m_pMapper->getParamMaximumNearLinkCovariance());
   const_forEach(LocalizedRangeScanVector, &nearLinkedScans)
   {
     LocalizedRangeScan* pNearScan = *iter;
@@ -2038,40 +2081,47 @@ std::vector<LocalizedRangeScanVector> MapperGraph::FindNearChains(LocalizedRange
 }
 
 LocalizedRangeScanVector MapperGraph::FindNearLinkedScans(LocalizedRangeScan* pScan,
-                                                          kt_double maxDistance)
+                                                          kt_double maxDistance,
+                                                          kt_double maxCovariance)
 {
   NearScanVisitor* pVisitor =
     new NearScanVisitor(pScan, maxDistance, m_pMapper->m_pUseScanBarycenter->GetValue());
+  EdgeCovarianceVisitor* pEdgeVisitor = new EdgeCovarianceVisitor(maxCovariance);
   LocalizedRangeScanVector nearLinkedScans =
-    m_pTraversal->TraverseForScans(GetVertex(pScan), pVisitor);
+    m_pTraversal->TraverseForScans(GetVertex(pScan), pVisitor, pEdgeVisitor);
   delete pVisitor;
+  delete pEdgeVisitor;
 
   return nearLinkedScans;
 }
 
 std::vector<Vertex<LocalizedRangeScan>*> MapperGraph::FindNearLinkedVertices(
-  LocalizedRangeScan* pScan, kt_double maxDistance)
+  LocalizedRangeScan* pScan, kt_double maxDistance, kt_double maxCovariance)
 {
   NearScanVisitor* pVisitor =
     new NearScanVisitor(pScan, maxDistance, m_pMapper->m_pUseScanBarycenter->GetValue());
+  EdgeCovarianceVisitor* pEdgeVisitor = new EdgeCovarianceVisitor(maxCovariance);
   std::vector<Vertex<LocalizedRangeScan>*> nearLinkedVertices =
-    m_pTraversal->TraverseForVertices(GetVertex(pScan), pVisitor);
+    m_pTraversal->TraverseForVertices(GetVertex(pScan), pVisitor, pEdgeVisitor);
   delete pVisitor;
+  delete pEdgeVisitor;
 
   return nearLinkedVertices;
 }
 
 LocalizedRangeScanVector MapperGraph::FindNearByScans(Name name, const Pose2 refPose,
-                                                      kt_double maxDistance)
+                                                      kt_double maxDistance, kt_double maxCovariance)
 {
   NearPoseVisitor* pVisitor =
     new NearPoseVisitor(refPose, maxDistance, m_pMapper->m_pUseScanBarycenter->GetValue());
+  EdgeCovarianceVisitor* pEdgeVisitor = new EdgeCovarianceVisitor(maxCovariance);
 
   Vertex<LocalizedRangeScan>* closestVertex = FindNearByScan(name, refPose);
 
   LocalizedRangeScanVector nearLinkedScans =
-    m_pTraversal->TraverseForScans(closestVertex, pVisitor);
+    m_pTraversal->TraverseForScans(closestVertex, pVisitor, pEdgeVisitor);
   delete pVisitor;
+  delete pEdgeVisitor;
 
   return nearLinkedScans;
 }
@@ -2214,12 +2264,49 @@ LocalizedRangeScanVector MapperGraph::FindPossibleLoopClosure(LocalizedRangeScan
   Pose2 pose = pScan->GetReferencePose(m_pMapper->m_pUseScanBarycenter->GetValue());
 
   // possible loop closure chain should not include close scans that have a
-  // path of links to the scan of interest
-  const LocalizedRangeScanVector nearLinkedScans =
-    FindNearLinkedScans(pScan, m_pMapper->m_pLoopSearchMaximumDistance->GetValue());
+  // path of non-degenerate links to the scan of interest
+  auto nearLinkedScans =
+    FindNearLinkedScans(pScan, m_pMapper->getParamLoopSearchMaximumDistance(), m_pMapper->getParamMaximumNearLinkCovariance());
+
+  // also exclude any immediate neighbors to the running scans than are
+  // within LoopSearchMinimumSpacing of the current scan, regardless of link
+  // degeneracy
+  double min_spacing_sq = m_pMapper->getParamLoopSearchMinimumSpacing() * m_pMapper->getParamLoopSearchMinimumSpacing();
+  const auto& current_pose = pScan->GetCorrectedPose();
+  const auto& running_scans = m_pMapper->GetMapperSensorManager()->GetRunningScans(pScan->GetSensorName());
+  for (const auto& scan: running_scans)
+  {
+    const auto& pose = scan->GetCorrectedPose();
+    if (pose.SquaredDistance(current_pose) > min_spacing_sq)
+    {
+      continue;
+    }
+
+    // get immediate neighbors
+    const auto vertex = GetVertex(scan);
+    const auto& edges = vertex->GetEdges();
+    for (const auto& edge: edges)
+    {
+      auto candidate = edge->GetSource()->GetObject();
+      if (candidate->GetStateId() == scan->GetStateId())
+      {
+        candidate = edge->GetTarget()->GetObject();
+      }
+      if (candidate->GetStateId() >= running_scans.front()->GetStateId())
+      {
+        continue;
+      }
+
+      if (find(nearLinkedScans.begin(), nearLinkedScans.end(), candidate) == nearLinkedScans.end())
+      {
+        nearLinkedScans.push_back(candidate);
+      }
+    }
+  }
 
   kt_int32u nScans =
     static_cast<kt_int32u>(m_pMapper->m_pMapperSensorManager->GetScans(rSensorName).size());
+  bool contains_excluded_scan = false;
   for (; rStartNum < nScans; rStartNum++)
   {
     LocalizedRangeScan* pCandidateScan =
@@ -2238,9 +2325,11 @@ LocalizedRangeScanVector MapperGraph::FindPossibleLoopClosure(LocalizedRangeScan
         math::Square(m_pMapper->m_pLoopSearchMaximumDistance->GetValue()) + KT_TOLERANCE)
     {
       // a linked scan cannot be in the chain
-      if (find(nearLinkedScans.begin(), nearLinkedScans.end(), pCandidateScan) !=
+      // TODO(malban): could this be a set or something instead of a linear search?
+      if (contains_excluded_scan || find(nearLinkedScans.begin(), nearLinkedScans.end(), pCandidateScan) !=
           nearLinkedScans.end())
       {
+        contains_excluded_scan = true;
         chain.clear();
       }
       else
@@ -2251,12 +2340,13 @@ LocalizedRangeScanVector MapperGraph::FindPossibleLoopClosure(LocalizedRangeScan
     else
     {
       // return chain if it is long "enough"
-      if (chain.size() >= m_pMapper->m_pLoopMatchMinimumChainSize->GetValue())
+      if (!contains_excluded_scan && chain.size() >= m_pMapper->m_pLoopMatchMinimumChainSize->GetValue())
       {
         return chain;
       }
       else
       {
+        contains_excluded_scan = false;
         chain.clear();
       }
     }
@@ -2440,11 +2530,22 @@ void Mapper::InitializeParameters()
                              "will not be linked regardless of the correlation response value.",
                              10.0, GetParameterManager());
 
+  m_pMaximumNearLinkCovariance =
+    new Parameter<kt_double>("MaximumNearLinkCovariance",
+                             "Maximum covariance for links to be considered as part of a nearby chain.",
+                             1.0, GetParameterManager());
+
   m_pLoopSearchMaximumDistance =
     new Parameter<kt_double>("LoopSearchMaximumDistance",
                              "Scans less than this distance from the current position will be "
                              "considered for a match in loop closure.",
                              4.0, GetParameterManager());
+
+  m_pLoopSearchMinimumSpacing =
+    new Parameter<kt_double>("LoopSearchMinimumSpacing",
+                             "Minimum distance between a loop closure candidates and an existing recent "
+                             "loop closure to the same chain.",
+                             1.5, GetParameterManager());
 
   m_pDoLoopClosing = new Parameter<kt_bool>("DoLoopClosing", "Enable/disable loop closure.", true,
                                             GetParameterManager());
@@ -2625,9 +2726,19 @@ double Mapper::getParamLinkScanMaximumDistance()
   return static_cast<double>(m_pLinkScanMaximumDistance->GetValue());
 }
 
+double Mapper::getParamMaximumNearLinkCovariance()
+{
+  return static_cast<double>(m_pMaximumNearLinkCovariance->GetValue());
+}
+
 double Mapper::getParamLoopSearchMaximumDistance()
 {
   return static_cast<double>(m_pLoopSearchMaximumDistance->GetValue());
+}
+
+double Mapper::getParamLoopSearchMinimumSpacing()
+{
+  return static_cast<double>(m_pLoopSearchMinimumSpacing->GetValue());
 }
 
 bool Mapper::getParamDoLoopClosing()
@@ -2794,9 +2905,19 @@ void Mapper::setParamLinkScanMaximumDistance(double d)
   m_pLinkScanMaximumDistance->SetValue((kt_double)d);
 }
 
+void Mapper::setParamMaximumNearLinkCovariance(double d)
+{
+  m_pMaximumNearLinkCovariance->SetValue((kt_double)d);
+}
+
 void Mapper::setParamLoopSearchMaximumDistance(double d)
 {
   m_pLoopSearchMaximumDistance->SetValue((kt_double)d);
+}
+
+void Mapper::setParamLoopSearchMinimumSpacing(double d)
+{
+  m_pLoopSearchMinimumSpacing->SetValue((kt_double)d);
 }
 
 void Mapper::setParamDoLoopClosing(bool b)
